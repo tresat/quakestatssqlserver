@@ -59,9 +59,9 @@ Namespace LogParsing
         ''' Inserts a new weapon record into the DB.
         ''' </summary>
         ''' <param name="pstrWeaponName">Name from log file.</param>
-        ''' <param name="pintWeaponLogID">Log ID of the weapon.</param>
+        ''' <param name="plngWeaponLogID">Log ID of the weapon.</param>
         ''' <returns>New weapon ID on success, 0 on fail.</returns>
-        Public Function CreateNewWeapon(ByVal pstrWeaponName As String, ByVal pintWeaponLogID As Integer) As Long
+        Public Function CreateNewWeapon(ByVal pstrWeaponName As String, ByVal plngWeaponLogID As Long) As Long
             Dim strSQL As String
             Dim cmdCreate As SqlCommand
             Dim trnCreate As SqlTransaction = Nothing
@@ -75,7 +75,7 @@ Namespace LogParsing
 
                 cmdCreate = New SqlCommand(strSQL, mcxnStatsDB)
                 cmdCreate.Parameters.AddWithValue("Name", pstrWeaponName)
-                cmdCreate.Parameters.AddWithValue("LogID", pintWeaponLogID)
+                cmdCreate.Parameters.AddWithValue("LogID", plngWeaponLogID)
                 cmdCreate.Transaction = trnCreate
 
                 cmdCreate.ExecuteNonQuery()

@@ -68,12 +68,9 @@ Public Class clsSystemSettings
                 "FROM SiteData.SystemSetting S " & _
                 "WHERE S.SettingKey = @Key "
 
-        cmdSet = New SqlCommand
-        cmdSet.CommandText = strSQL
-        cmdSet.Connection = mcxnDB
-        If ptrnCurrent IsNot Nothing Then cmdSet.Transaction = ptrnCurrent
-
+        cmdSet = New SqlCommand(strSQL, mcxnDB)
         cmdSet.Parameters.AddWithValue("@Key", pstrKey)
+        If ptrnCurrent IsNot Nothing Then cmdSet.Transaction = ptrnCurrent
 
         objResult = cmdSet.ExecuteScalar
 

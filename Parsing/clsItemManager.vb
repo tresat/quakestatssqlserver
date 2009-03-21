@@ -73,7 +73,7 @@ Namespace LogParsing
             Try
                 trnCreate = mcxnStatsDB.BeginTransaction
 
-                strSQL = "INSERT INTO CalculatedData.Item (ItemName, IsWeapon, IsAmmo, IsFlag, fkFirstEncounteredLineNumber) " & _
+                strSQL = "INSERT INTO CalculatedData.Item (ItemName, IsWeapon, IsAmmo, IsFlag, fkFirstEncounteredItemLineNumber) " & _
                         "VALUES (@Name, @IsWeapon, @IsAmmo, @IsFlag, @FirstLine) "
 
                 cmdCreate = New SqlCommand(strSQL, mcxnStatsDB)
