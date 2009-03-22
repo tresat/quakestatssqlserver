@@ -931,7 +931,7 @@ Namespace LogParsing
             mobjGameCurr.EndGameDelimiterLineNo = mlngCurrentLineNo + 1
             'Mark all client end/shutdown info, if not done already
             For Each objClient In mobjGameCurr.GetAllCurrentClients.Values
-                If objClient.EndLineNo <> 0 Then
+                If objClient.EndLineNo = 0 Then
                     objClient.EndLineNo = mlngCurrentLineNo
                 End If
                 If objClient.EndTime Is Nothing Then
