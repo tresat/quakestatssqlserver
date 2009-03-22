@@ -290,7 +290,7 @@ Namespace LogParsing.QuakeObjects
             If mobjDisconnectTime IsNot Nothing Then strSQL &= ", ServerDisconnectTime, fkClientDisconnectLineNumber "
             If mblnHasInfo Then strSQL &= ", ClientName, TeamLogID "
             If mblnScoreSet Then strSQL &= ", Score, Ping, IsFinalClient, fkScoreLineNumber "
-            If mobjEndTime IsNot Nothing Then strSQL &= ", ServerEndTime "
+            If mobjEndTime IsNot Nothing Then strSQL &= ", ServerEndTime, ClientEndLineNumber "
             strSQL &= ") VALUES (@GameID, @ClientLogID, @ServerConnectTime "
             If mlngConnectLineNo <> 0 Then strSQL &= ", @ConnectLineNo "
             If mlngBeginLineNo <> 0 Then strSQL &= ", @BeginLineNo "
@@ -298,7 +298,7 @@ Namespace LogParsing.QuakeObjects
             If mobjDisconnectTime IsNot Nothing Then strSQL &= ", @ServerDisconnectTime, @DisconnectLineNo "
             If mblnHasInfo Then strSQL &= ", @ClientName, @TeamLogID "
             If mblnScoreSet Then strSQL &= ", @Score, @Ping, @IsFinalClient, @ScoreLineNo "
-            If mobjEndTime IsNot Nothing Then strSQL &= ", @ServerEndTime "
+            If mobjEndTime IsNot Nothing Then strSQL &= ", @ServerEndTime, @EndLineNo "
             strSQL &= ") "
 
             cmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
@@ -324,8 +324,6 @@ Namespace LogParsing.QuakeObjects
             End If
             If mobjEndTime IsNot Nothing Then
                 cmdWrite.Parameters.AddWithValue("ServerEndTime", mobjEndTime.Seconds)
-            End If
-            If mlngEndLineNo <> 0 Then
                 cmdWrite.Parameters.AddWithValue("EndLineNo", mlngEndLineNo)
             End If
             cmdWrite.Transaction = ptrnWrite

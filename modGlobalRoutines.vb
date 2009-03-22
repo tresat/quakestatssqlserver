@@ -13,4 +13,13 @@ Module modGlobalRoutines
             pcxnStatsDB.Open()
         End If
     End Sub
+
+    ''' <summary>
+    ''' Adds the message to the console textbox.  Calls DoEvents to refresh the visible text.
+    ''' </summary>
+    ''' <param name="pstrMsg">The text to add to the textbox.</param>
+    Public Sub Print(ByVal pstrMsg As String, Optional ByVal pblnNewLine As Boolean = True)
+        frmMain.rtbConsole.Text = pstrMsg & CStr(IIf(pblnNewLine, vbCrLf, String.Empty)) & frmMain.rtbConsole.Text
+        Application.DoEvents()
+    End Sub
 End Module

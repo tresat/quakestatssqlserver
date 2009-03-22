@@ -8,6 +8,8 @@ Imports QuakeStats.LogParsing.QuakeObjects
 Imports System.Text.RegularExpressions
 Imports System.Threading
 
+'TODO: Make SystemSetting.SettingKey a unique column
+
 Namespace LogParsing
     Public Class clsStatsParser
 #Region "Constants"
@@ -35,7 +37,6 @@ Namespace LogParsing
 #Region "Member Vars"
         Private mcxnStatsDB As SqlConnection
         Private mstrGamesLogPath As String
-        Private mrtbConsole As RichTextBox
 
         Private mobjTimer As clsHighPerformanceTimer
         Private mobjItemManager As clsItemManager
@@ -59,15 +60,6 @@ Namespace LogParsing
 #End Region
 
 #Region "Properties"
-        Public Property Console() As RichTextBox
-            Get
-                Return mrtbConsole
-            End Get
-            Set(ByVal value As RichTextBox)
-                mrtbConsole = value
-            End Set
-        End Property
-
         Public Property StatsDB() As SqlConnection
             Get
                 Return mcxnStatsDB
@@ -90,11 +82,9 @@ Namespace LogParsing
 
 #Region "Constructors"
         Public Sub New(ByVal pstrGamesLogFilePath As String, _
-                    ByVal pcxnStatsDB As SqlConnection, _
-                    ByVal prtbConsole As RichTextBox)
+                    ByVal pcxnStatsDB As SqlConnection)
             GamesLogPath = pstrGamesLogFilePath
             StatsDB = pcxnStatsDB
-            Console = prtbConsole
 
             mobjTimer = New clsHighPerformanceTimer
             mobjItemManager = New clsItemManager(mcxnStatsDB)
@@ -119,7 +109,6 @@ Namespace LogParsing
 
             'Get the line of the last log data line we wrote (this could be higher than the last game shutdown line)
             mlngLastParsedLogFileLineNo = CLng(clsSystemSettings.GetSystemSetting("LastSavedLogFileDataLineNo", "0"))
-            'TODO: check for this before each log file line write
             
             Using reader As New StreamReader(New FileStream(mstrGamesLogPath, FileMode.Open))
                 'Move to the next line which needs parsing
@@ -199,7 +188,7 @@ Namespace LogParsing
                 mlngReadBytes += mstrCurrentLine.Length + 1 'add 1 for the EOL char
                 If mlngCurrentLineNo Mod 5000 = 0 Then
                     Print("Parsing... On " & mlngCurrentLineNo & " read " & mlngReadBytes & " of " & mlngFileBytes & " (" & FormatNumber((mlngReadBytes / mlngFileBytes) * 100) & "%)")
-                    Application.DoEvents()
+                    'Application.DoEvents()
                     'mrtbConsole.ScrollToCaret()
                     'Thread.Sleep(1000)
                 End If
@@ -210,8 +199,6 @@ Namespace LogParsing
             'Write the last server uppage to the  & ")"
             lngLastServerUppageID = mobjServerUppageCurr.WriteDB()
             If lngLastServerUppageID = 0 Then Throw New Exception("Error updating server uppage: " & mobjServerUppageCurr.ServerUppageID & ".  Last line no: " & mlngCurrentLineNo)
-
-            clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo))
 
             mobjTimer.StopTimer()
             Print("Finished in " & mobjTimer.GetResultAsTimeString & ".")
@@ -269,6 +256,7 @@ Namespace LogParsing
 
 #Region "IndividualEventParsingRoutines"
         Private Sub ParseEventScore(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_SCORE_REGEX, RegexOptions.ExplicitCapture)
@@ -287,18 +275,34 @@ Namespace LogParsing
             strClientName = matchEvent.Groups("client").Value
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.ScoreLine (LineNumber, Timestamp, Score, Ping, ClientLogID, ClientName) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.ScoreLine (LineNumber, Timestamp, Score, Ping, ClientLogID, ClientName) " & _
                                     "VALUES (@LineNo, @Timestamp, @Score, @Ping, @ClientLog, @ClientName) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                sqlcmdWrite.Parameters.AddWithValue("Score", lngScore)
-                sqlcmdWrite.Parameters.AddWithValue("Ping", lngPing)
-                sqlcmdWrite.Parameters.AddWithValue("ClientLog", lngClientLogID)
-                sqlcmdWrite.Parameters.AddWithValue("ClientName", strClientName)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Parameters.AddWithValue("Score", lngScore)
+                    sqlcmdWrite.Parameters.AddWithValue("Ping", lngPing)
+                    sqlcmdWrite.Parameters.AddWithValue("ClientLog", lngClientLogID)
+                    sqlcmdWrite.Parameters.AddWithValue("ClientName", strClientName)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnwrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             objClient = mobjGameCurr.GetCurrentClient(lngClientLogID)
@@ -311,6 +315,7 @@ Namespace LogParsing
         Private Sub ParseEventBlue(ByVal pstrData As String)
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
+            Dim trnWrite As SqlTransaction = Nothing
             Dim regexEvent As New Regex(M_STR_BLUE_REGEX, RegexOptions.ExplicitCapture)
             Dim matchEvent As Match
             Dim lngRed As Long
@@ -322,16 +327,32 @@ Namespace LogParsing
             lngBlue = CLng(matchEvent.Groups("blue").Value)
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.BlueLine (LineNumber, Timestamp, Red, Blue) " & _
-                                    "VALUES (@LineNo, @Timestamp, @Red, @Blue) "
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                sqlcmdWrite.Parameters.AddWithValue("Red", lngRed)
-                sqlcmdWrite.Parameters.AddWithValue("Blue", lngBlue)
+                    strSQL = "INSERT INTO LogFileData.BlueLine (LineNumber, Timestamp, Red, Blue) " & _
+                                        "VALUES (@LineNo, @Timestamp, @Red, @Blue) "
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Parameters.AddWithValue("Red", lngRed)
+                    sqlcmdWrite.Parameters.AddWithValue("Blue", lngBlue)
+                    sqlcmdWrite.Transaction = trnWrite
+
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             mobjGameCurr.TeamScoresSet = True
@@ -341,6 +362,7 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventRed(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_RED_REGEX, RegexOptions.ExplicitCapture)
@@ -354,16 +376,32 @@ Namespace LogParsing
             lngBlue = CLng(matchEvent.Groups("blue").Value)
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.RedLine (LineNumber, Timestamp, Red, Blue) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.RedLine (LineNumber, Timestamp, Red, Blue) " & _
                                     "VALUES (@LineNo, @Timestamp, @Red, @Blue) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                sqlcmdWrite.Parameters.AddWithValue("Red", lngRed)
-                sqlcmdWrite.Parameters.AddWithValue("Blue", lngBlue)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Parameters.AddWithValue("Red", lngRed)
+                    sqlcmdWrite.Parameters.AddWithValue("Blue", lngBlue)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             mobjGameCurr.TeamScoresSet = True
@@ -373,18 +411,35 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventExit()
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.ExitLine (LineNumber, Timestamp) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.ExitLine (LineNumber, Timestamp) " & _
                                     "VALUES (@LineNo, @Timestamp) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             'The current game is finished
@@ -394,6 +449,7 @@ Namespace LogParsing
         Private Sub ParseEventKill(ByVal pstrData As String)
             Const STR_NON_PLAYER As String = "<WORLD>"
 
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_KILL_REGEX, RegexOptions.ExplicitCapture)
@@ -418,20 +474,36 @@ Namespace LogParsing
                 strWeaponName = matchEvent.Groups("weapon").Value
 
                 If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                    strSQL = "INSERT INTO LogFileData.KillLine (LineNumber, Timestamp, KillerLogID, VictimLogID, WeaponLogID, KillerName, VictimName, WeaponName) " & _
-                                    "VALUES (@LineNo, @Timestamp, @KillerLogID, @VictimLogID, @WeaponLogID, @KillerName, @VictimName, @WeaponName) "
+                    Try
+                        trnWrite = mcxnStatsDB.BeginTransaction
 
-                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                    sqlcmdWrite.Parameters.AddWithValue("KillerLogID", lngKillerLogID)
-                    sqlcmdWrite.Parameters.AddWithValue("VictimLogID", lngVictimLogID)
-                    sqlcmdWrite.Parameters.AddWithValue("WeaponLogID", lngWeaponLogID)
-                    sqlcmdWrite.Parameters.AddWithValue("KillerName", strKillerName)
-                    sqlcmdWrite.Parameters.AddWithValue("VictimName", strVictimName)
-                    sqlcmdWrite.Parameters.AddWithValue("WeaponName", strWeaponName)
+                        strSQL = "INSERT INTO LogFileData.KillLine (LineNumber, Timestamp, KillerLogID, VictimLogID, WeaponLogID, KillerName, VictimName, WeaponName) " & _
+                                        "VALUES (@LineNo, @Timestamp, @KillerLogID, @VictimLogID, @WeaponLogID, @KillerName, @VictimName, @WeaponName) "
 
-                    sqlcmdWrite.ExecuteNonQuery()
+                        sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                        sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                        sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                        sqlcmdWrite.Parameters.AddWithValue("KillerLogID", lngKillerLogID)
+                        sqlcmdWrite.Parameters.AddWithValue("VictimLogID", lngVictimLogID)
+                        sqlcmdWrite.Parameters.AddWithValue("WeaponLogID", lngWeaponLogID)
+                        sqlcmdWrite.Parameters.AddWithValue("KillerName", strKillerName)
+                        sqlcmdWrite.Parameters.AddWithValue("VictimName", strVictimName)
+                        sqlcmdWrite.Parameters.AddWithValue("WeaponName", strWeaponName)
+                        sqlcmdWrite.Transaction = trnWrite
+
+                        sqlcmdWrite.ExecuteNonQuery()
+
+                        'Save the last log file update
+                        clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                        trnWrite.Commit()
+                    Catch ex As Exception
+                        If trnWrite IsNot Nothing Then
+                            trnWrite.Rollback()
+                        End If
+
+                        Throw
+                    End Try
                 End If
 
                 If Not UCase$(strKillerName).Equals(STR_NON_PLAYER) Then
@@ -459,6 +531,7 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventSay(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_SAY_REGEX, RegexOptions.ExplicitCapture)
@@ -473,16 +546,32 @@ Namespace LogParsing
                 strMessage = CStr(matchEvent.Groups("message").Value)
 
                 If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                    strSQL = "INSERT INTO LogFileData.SayLine (LineNumber, Timestamp, ClientName, Message) " & _
-                                    "VALUES (@LineNo, @Timestamp, @ClientName, @Message) "
+                    Try
+                        trnWrite = mcxnStatsDB.BeginTransaction
 
-                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                    sqlcmdWrite.Parameters.AddWithValue("ClientName", strClientName)
-                    sqlcmdWrite.Parameters.AddWithValue("Message", strMessage)
+                        strSQL = "INSERT INTO LogFileData.SayLine (LineNumber, Timestamp, ClientName, Message) " & _
+                                        "VALUES (@LineNo, @Timestamp, @ClientName, @Message) "
 
-                    sqlcmdWrite.ExecuteNonQuery()
+                        sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                        sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                        sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                        sqlcmdWrite.Parameters.AddWithValue("ClientName", strClientName)
+                        sqlcmdWrite.Parameters.AddWithValue("Message", strMessage)
+                        sqlcmdWrite.Transaction = trnWrite
+
+                        sqlcmdWrite.ExecuteNonQuery()
+
+                        'Save the last log file update
+                        clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                        trnWrite.Commit()
+                    Catch ex As Exception
+                        If trnWrite IsNot Nothing Then
+                            trnWrite.Rollback()
+                        End If
+
+                        Throw
+                    End Try
                 End If
 
                 objClient = mobjGameCurr.GetCurrentClientByName(strClientName)
@@ -498,6 +587,7 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventTell(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_TELL_REGEX, RegexOptions.ExplicitCapture)
@@ -524,17 +614,33 @@ Namespace LogParsing
                 'We'll found the match we'll work with, add the dialog to the game
                 If objClient IsNot Nothing AndAlso objClient2 IsNot Nothing Then
                     If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                        strSQL = "INSERT INTO LogFileData.TellLine (LineNumber, Timestamp, ClientNameSpeaker, ClientNameTarget, Message) " & _
-                                "VALUES (@LineNo, @Timestamp, @Speaker, @Target, @Message) "
+                        Try
+                            trnWrite = mcxnStatsDB.BeginTransaction
 
-                        sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                        sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                        sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                        sqlcmdWrite.Parameters.AddWithValue("Speaker", strClient1Name)
-                        sqlcmdWrite.Parameters.AddWithValue("Target", strClient2Name)
-                        sqlcmdWrite.Parameters.AddWithValue("Message", strMessage)
+                            strSQL = "INSERT INTO LogFileData.TellLine (LineNumber, Timestamp, ClientNameSpeaker, ClientNameTarget, Message) " & _
+                                        "VALUES (@LineNo, @Timestamp, @Speaker, @Target, @Message) "
 
-                        sqlcmdWrite.ExecuteNonQuery()
+                            sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                            sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                            sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                            sqlcmdWrite.Parameters.AddWithValue("Speaker", strClient1Name)
+                            sqlcmdWrite.Parameters.AddWithValue("Target", strClient2Name)
+                            sqlcmdWrite.Parameters.AddWithValue("Message", strMessage)
+                            sqlcmdWrite.Transaction = trnWrite
+
+                            sqlcmdWrite.ExecuteNonQuery()
+
+                            'Save the last log file update
+                            clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                            trnWrite.Commit()
+                        Catch ex As Exception
+                            If trnWrite IsNot Nothing Then
+                                trnWrite.Rollback()
+                            End If
+
+                            Throw
+                        End Try
                     End If
 
                     mobjGameCurr.AddDialog("TELL", mlngCurrentLineNo, mobjCurrentTimestamp, objClient, strMessage, _
@@ -549,6 +655,7 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventVTell(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_VTELL_REGEX, RegexOptions.ExplicitCapture)
@@ -575,17 +682,33 @@ Namespace LogParsing
                 'We'll found the match we'll work with, add the dialog to the game
                 If objClient IsNot Nothing AndAlso objClient2 IsNot Nothing Then
                     If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                        strSQL = "INSERT INTO LogFileData.VTellLine (LineNumber, Timestamp, ClientNameSpeaker, ClientNameTarget, Message) " & _
-                                "VALUES (@LineNo, @Timestamp, @Speaker, @Target, @Message) "
+                        Try
+                            trnWrite = mcxnStatsDB.BeginTransaction
 
-                        sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                        sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                        sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                        sqlcmdWrite.Parameters.AddWithValue("Speaker", strClient1Name)
-                        sqlcmdWrite.Parameters.AddWithValue("Target", strClient2Name)
-                        sqlcmdWrite.Parameters.AddWithValue("Message", strMessage)
+                            strSQL = "INSERT INTO LogFileData.VTellLine (LineNumber, Timestamp, ClientNameSpeaker, ClientNameTarget, Message) " & _
+                                        "VALUES (@LineNo, @Timestamp, @Speaker, @Target, @Message) "
 
-                        sqlcmdWrite.ExecuteNonQuery()
+                            sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                            sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                            sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                            sqlcmdWrite.Parameters.AddWithValue("Speaker", strClient1Name)
+                            sqlcmdWrite.Parameters.AddWithValue("Target", strClient2Name)
+                            sqlcmdWrite.Parameters.AddWithValue("Message", strMessage)
+                            sqlcmdWrite.Transaction = trnWrite
+
+                            sqlcmdWrite.ExecuteNonQuery()
+
+                            'Save the last log file update
+                            clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                            trnWrite.Commit()
+                        Catch ex As Exception
+                            If trnWrite IsNot Nothing Then
+                                trnWrite.Rollback()
+                            End If
+
+                            Throw
+                        End Try
                     End If
 
                     mobjGameCurr.AddDialog("VTELL", mlngCurrentLineNo, mobjCurrentTimestamp, objClient, strMessage, _
@@ -600,6 +723,7 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventSayTeam(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_SAYTEAM_REGEX, RegexOptions.ExplicitCapture)
@@ -614,16 +738,32 @@ Namespace LogParsing
             strMessage = CStr(matchEvent.Groups("message").Value)
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.SayTeamLine (LineNumber, Timestamp, ClientName, Message) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.SayTeamLine (LineNumber, Timestamp, ClientName, Message) " & _
                                 "VALUES (@LineNo, @Timestamp, @ClientName, @Message) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                sqlcmdWrite.Parameters.AddWithValue("ClientName", strClientName)
-                sqlcmdWrite.Parameters.AddWithValue("Message", strMessage)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Parameters.AddWithValue("ClientName", strClientName)
+                    sqlcmdWrite.Parameters.AddWithValue("Message", strMessage)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             'Retrieve the player name by looking up the alias
@@ -632,6 +772,7 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventItem(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_ITEM_REGEX, RegexOptions.ExplicitCapture)
@@ -647,15 +788,32 @@ Namespace LogParsing
             strItemName = CStr(matchEvent.Groups("itemName").Value)
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.ItemLine (LineNumber, Timestamp, ItemName) " & _
-                                "VALUES (@LineNo, @Timestamp, @ItemName) "
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                sqlcmdWrite.Parameters.AddWithValue("ItemName", strItemName)
+                    strSQL = "INSERT INTO LogFileData.ItemLine (LineNumber, Timestamp, ClientLogID, ItemName) " & _
+                                "VALUES (@LineNo, @Timestamp, @ClientLogNo, @ItemName) "
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Parameters.AddWithValue("ClientLogNo", lngClientNo)
+                    sqlcmdWrite.Parameters.AddWithValue("ItemName", strItemName)
+                    sqlcmdWrite.Transaction = trnWrite
+
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             'Get the log id of the current player from the first part
@@ -675,6 +833,7 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventClientDisconnect(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_CLIENTDISCONNECT_REGEX, RegexOptions.ExplicitCapture)
@@ -687,15 +846,31 @@ Namespace LogParsing
             lngClientNo = CLng(matchEvent.Groups("clientNo").Value)
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.ClientDisconnectLine (LineNumber, Timestamp, ClientLogID) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.ClientDisconnectLine (LineNumber, Timestamp, ClientLogID) " & _
                                 "VALUES (@LineNo, @Timestamp, @LogID) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                sqlcmdWrite.Parameters.AddWithValue("LogID", lngClientNo)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Parameters.AddWithValue("LogID", lngClientNo)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             If mobjGameCurr.CurrentClientExists(lngClientNo) Then
@@ -716,18 +891,35 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventShutdownGame()
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.ShutdownGameLine (LineNumber, Timestamp) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.ShutdownGameLine (LineNumber, Timestamp) " & _
                                 "VALUES (@LineNo, @Timestamp) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             'Mark the current game as completely present in the log
@@ -749,6 +941,7 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventClientBegin(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_CLIENTBEGIN_REGEX, RegexOptions.ExplicitCapture)
@@ -761,15 +954,31 @@ Namespace LogParsing
             lngClientNo = CLng(matchEvent.Groups("clientNo").Value)
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.ClientBeginLine (LineNumber, Timestamp, ClientLogID) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.ClientBeginLine (LineNumber, Timestamp, ClientLogID) " & _
                                 "VALUES (@LineNo, @Timestamp, @LogID) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                sqlcmdWrite.Parameters.AddWithValue("LogID", lngClientNo)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Parameters.AddWithValue("LogID", lngClientNo)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             'Get the log id of the current player from the first part
@@ -781,6 +990,7 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventClientUserInfoChanged(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_CLIENTUSERINFOCHANGED_REGEX, RegexOptions.ExplicitCapture)
@@ -796,16 +1006,32 @@ Namespace LogParsing
             strInfo = CStr(matchEvent.Groups("info").Value)
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.ClientUserinfoChangedLine (LineNumber, Timestamp, ClientLogID, InfoString) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.ClientUserinfoChangedLine (LineNumber, Timestamp, ClientLogID, InfoString) " & _
                                 "VALUES (@LineNo, @Timestamp, @LogID, @Info) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                sqlcmdWrite.Parameters.AddWithValue("LogID", lngClientNo)
-                sqlcmdWrite.Parameters.AddWithValue("Info", strInfo)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Parameters.AddWithValue("LogID", lngClientNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Info", strInfo)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             'Get the log id of the current player from the first part
@@ -837,6 +1063,7 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventClientConnect(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
             Dim regexEvent As New Regex(M_STR_CLIENTCONNECT_REGEX, RegexOptions.ExplicitCapture)
@@ -849,15 +1076,31 @@ Namespace LogParsing
             lngClientNo = CLng(matchEvent.Groups("clientNo").Value)
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.ClientConnectLine (LineNumber, Timestamp, ClientLogID) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.ClientConnectLine (LineNumber, Timestamp, ClientLogID) " & _
                                 "VALUES (@LineNo, @Timestamp, @LogID) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                sqlcmdWrite.Parameters.AddWithValue("LogID", lngClientNo)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Parameters.AddWithValue("LogID", lngClientNo)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             'Sometimes a client can connect twice in a row, without a disconnect inbetween...
@@ -876,35 +1119,69 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventWarmup(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.WarmupLine (LineNumber, Timestamp) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.WarmupLine (LineNumber, Timestamp) " & _
                                "VALUES (@LineNo, @Timestamp) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
         End Sub
 
         Private Sub ParseEventInitGame(ByVal pstrData As String)
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.InitGameLine (LineNumber, Timestamp, InfoString) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.InitGameLine (LineNumber, Timestamp, InfoString) " & _
                                 "VALUES (@LineNo, @Timestamp, @Data) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
-                sqlcmdWrite.Parameters.AddWithValue("Data", pstrData)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Parameters.AddWithValue("Data", pstrData)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             'Create a new game object to represent the current game
@@ -918,35 +1195,69 @@ Namespace LogParsing
         End Sub
 
         Private Sub ParseEventGameDelimiter()
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                strSQL = "INSERT INTO LogFileData.GameDelimiterLine (LineNumber, Timestamp, IsFirstLineInUppage) " & _
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
+
+                    strSQL = "INSERT INTO LogFileData.GameDelimiterLine (LineNumber, Timestamp, IsFirstLineInUppage) " & _
                                 "VALUES (@LineNo, @Timestamp, 0) "
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Transaction = trnWrite
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
         End Sub
 
         Private Sub ParseEventServerStartup()
+            Dim trnWrite As SqlTransaction = Nothing
             Dim strSQL As String
             Dim sqlcmdWrite As SqlCommand = Nothing
 
             If mlngLastParsedLogFileLineNo < mlngCurrentLineNo Then
-                'We'll write these to the GameDelimiterLine table, and mark the IsFirstGame flag
-                strSQL = "INSERT INTO LogFileData.GameDelimiterLine (LineNumber, Timestamp, IsFirstLineInUppage) " & _
-                        "VALUES (@LineNo, @Timestamp, 1) "
+                Try
+                    trnWrite = mcxnStatsDB.BeginTransaction
 
-                sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
-                sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
-                sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    'We'll write these to the GameDelimiterLine table, and mark the IsFirstGame flag
+                    strSQL = "INSERT INTO LogFileData.GameDelimiterLine (LineNumber, Timestamp, IsFirstLineInUppage) " & _
+                            "VALUES (@LineNo, @Timestamp, 1) "
 
-                sqlcmdWrite.ExecuteNonQuery()
+                    sqlcmdWrite = New SqlCommand(strSQL, mcxnStatsDB)
+                    sqlcmdWrite.Parameters.AddWithValue("LineNo", mlngCurrentLineNo)
+                    sqlcmdWrite.Parameters.AddWithValue("Timestamp", mobjCurrentTimestamp.RawString)
+                    sqlcmdWrite.Transaction = trnWrite
+
+                    sqlcmdWrite.ExecuteNonQuery()
+
+                    'Save the last log file update
+                    clsSystemSettings.SetSystemSetting("LastSavedLogFileDataLineNo", CStr(mlngCurrentLineNo), trnWrite)
+
+                    trnWrite.Commit()
+                Catch ex As Exception
+                    If trnWrite IsNot Nothing Then
+                        trnWrite.Rollback()
+                    End If
+
+                    Throw
+                End Try
             End If
 
             'If not on very first line of file (don't want to write empty first server uppage)
@@ -987,7 +1298,7 @@ Namespace LogParsing
                 mlngReadBytes += mstrCurrentLine.Length + 1 'add 1 for the EOL char
                 If mlngCurrentLineNo Mod 5000 = 0 Then
                     Print("Spooling... On " & mlngCurrentLineNo & " read " & mlngReadBytes & " of " & mlngFileBytes & " (" & FormatNumber((mlngReadBytes / mlngFileBytes) * 100) & "%)")
-                    Application.DoEvents()
+                    'Application.DoEvents()
                     'mrtbConsole.ScrollToCaret()
                     'Thread.Sleep(1000)
                 End If
@@ -995,14 +1306,6 @@ Namespace LogParsing
 
             mobjTimer.StopTimer()
             Print("Finished spooling in " & mobjTimer.GetResultAsTimeString & ".")
-        End Sub
-
-        ''' <summary>
-        ''' Adds the message to the console textbox.
-        ''' </summary>
-        ''' <param name="pstrMsg">The text to add to the textbox.</param>
-        Private Sub Print(ByVal pstrMsg As String, Optional ByVal pblnNewLine As Boolean = True)
-            mrtbConsole.Text = pstrMsg & CStr(IIf(pblnNewLine, vbCrLf, String.Empty)) & mrtbConsole.Text
         End Sub
 #End Region
     End Class

@@ -92,7 +92,10 @@
       <DependentUpon>Settings.settings</DependentUpon>
       <DesignTimeSharedInput>True</DesignTimeSharedInput>
     </Compile>
+    <Compile Include="Parsing\clsAdjacencyCalculator.vb" />
+    <Compile Include="Parsing\clsFlagCalculator.vb" />
     <Compile Include="Parsing\clsItemManager.vb" />
+    <Compile Include="Parsing\clsMapCalculator.vb" />
     <Compile Include="Parsing\clsStatsParser.vb" />
     <Compile Include="Parsing\clsWeaponManager.vb" />
     <Compile Include="Parsing\QuakeObjects\clsClient.vb" />
