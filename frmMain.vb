@@ -9,7 +9,7 @@ Public Class frmMain
 
 #Region "Member Vars"
     Private mobjParser As clsStatsParser
-    Private mobjFlagCalculator As clsFlagCalculator
+    Private WithEvents mobjFlagCalculator As clsFlagCalculator
     Private mobjMapCalculator As clsMapCalculator
     Private mobjAdjacencyCalculator As clsAdjacencyCalculator
 #End Region
@@ -26,6 +26,7 @@ Public Class frmMain
         mobjParser = New clsStatsParser(strGamesLogPath, cxnStatsDB)
         mobjFlagCalculator = New clsFlagCalculator(cxnStatsDB)
         mobjMapCalculator = New clsMapCalculator(cxnStatsDB)
+        mobjAdjacencyCalculator = New clsAdjacencyCalculator(cxnStatsDB)
     End Sub
 
     Private Sub cmdParse_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdParse.Click
@@ -42,6 +43,12 @@ Public Class frmMain
 
     Private Sub cmdDoLinking_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdDoLinking.Click
         mobjAdjacencyCalculator.CalculateAllAdjacencies()
+    End Sub
+
+    Private Sub mobjFlagCalculator_GameEventParsed(ByVal pintCurrentEvent As Integer, ByVal pintTotalEvents As Integer) Handles mobjFlagCalculator.GameEventParsed
+        txtGameEventCurrent.Text = CStr(pintCurrentEvent)
+        txtGameEventTotal.Text = CStr(pintTotalEvents)
+        Application.DoEvents()
     End Sub
 #End Region
 End Class

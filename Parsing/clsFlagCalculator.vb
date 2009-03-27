@@ -1,6 +1,10 @@
 ﻿Option Explicit On
 Option Strict On
 
+'TODO: Need to link clients to next/prev next.  Then can add treatment for client end
+'caused by clientuserinfochanged where a client is just a continuation.  or maybe, can
+'just add new event and xfer flag on info changed, drop on disconnect.  explore more
+
 Imports System.Data.SqlClient
 Imports System.IO
 Imports System.Configuration
@@ -25,6 +29,8 @@ Public Class clsFlagCalculator
         ResetDueToRedTimerExpiration
         ResetDueToBlueTimerExpiration
         CarrierClientEnd
+        CarrierClientNumberChange
+        CarrierClientTeamChange
     End Enum
 
 #Region "Status Snapshot"
@@ -42,7 +48,7 @@ Public Class clsFlagCalculator
         Private mlngRedFlagResetTime As Long
         Private mlngBlueFlagResetTime As Long
 
-        Private Shared mlngCurrentNodeID As Long = 0
+        Private Shared mlngCurrentNodeID As Long = 1
 #End Region
 
 #Region "Properties"
@@ -401,6 +407,8 @@ Public Class clsFlagCalculator
     Private mobjRoot As clsStatusSnapshot
     Private mlstWorkingSet As List(Of clsStatusSnapshot)
     Private mobjTimer As Utilities.clsHighPerformanceTimer
+
+    Private mstrGameTreeOutputPath As String
 #End Region
 
 #Region "Properties"
@@ -415,11 +423,17 @@ Public Class clsFlagCalculator
     End Property
 #End Region
 
+#Region "Events"
+    Public Event GameEventParsed(ByVal pintCurrentEvent As Integer, ByVal pintTotalEvents As Integer)
+#End Region
+
 #Region "Constructors"
     Public Sub New(ByRef pcxnDB As SqlConnection)
         StatsDB = pcxnDB
 
         mobjTimer = New Utilities.clsHighPerformanceTimer
+
+        mstrGameTreeOutputPath = VerifyGameTreeOutputPath()
     End Sub
 #End Region
 
@@ -427,17 +441,20 @@ Public Class clsFlagCalculator
     Public Sub CalculateGame(ByVal plngGameID As Long)
         If IsCTF(plngGameID) Then
             Try
-                Console.Write("Game: " & plngGameID & " init: " & GetInitGameLineNo(plngGameID) & " for map: " & GetMapName(plngGameID) & " ")
+                Print("Game: " & plngGameID & " init: " & GetInitGameLineNo(plngGameID) & " for map: " & GetMapName(plngGameID) & " ", False)
                 mobjTimer.StartTimer()
                 DoCalculateGame(plngGameID)
-                Console.Write("succeeded ")
+                Print("succeeded ", False)
+                PrintTreeToFile(plngGameID)
+                MarkFlagCalculationsComplete(plngGameID, True)
             Catch ex As Exception
-                Print(vbCrLf & "**************************************FAILED**************************************")
                 Print("**************************************FAILED**************************************")
                 Print("**************************************FAILED**************************************")
+                Print("**************************************FAILED**************************************")
+                MarkFlagCalculationsComplete(plngGameID, False)
             End Try
             mobjTimer.StopTimer()
-            Console.Write("in: " & mobjTimer.GetResultAsTimeString & vbCrLf)
+            Print("in: " & mobjTimer.GetResultAsTimeString & " (actual " & mobjTimer.GetElapsedAsTimeString & ").")
         Else
             Print("Game: " & plngGameID & " is NOT CTF, skipping.")
         End If
@@ -447,9 +464,16 @@ Public Class clsFlagCalculator
         Dim lngMinGameID As Long = GetMinGameID()
         Dim lngMaxGameID As Long = GetMaxGameID()
 
+        Print("Begin calculating flag captures for " & lngMaxGameID - lngMinGameID & " maximum games, from: " & lngMinGameID & " to: " & lngMaxGameID & " ...")
         For lngCurrentGameID As Long = lngMinGameID To lngMaxGameID
-            CalculateGame(lngCurrentGameID)
+            If Not IsFlagCalculationsComplete(lngCurrentGameID) Then
+                If IsCompleteInLog(lngCurrentGameID) Then
+                    CalculateGame(lngCurrentGameID)
+                    Print(lngMaxGameID - lngCurrentGameID & " maximum games remaining...")
+                End If
+            End If
         Next
+        Print("Finished calculating flag captures.")
     End Sub
 #End Region
 
@@ -460,6 +484,10 @@ Public Class clsFlagCalculator
         strResult &= "******************************STATUS******************************" & vbCrLf
 
         PrintFirstBranchRecDown(mobjRoot, 0)
+    End Sub
+
+    Public Sub PrintTreeToFile(Optional ByVal plngGameID As Long = 0)
+        PrintGameStatusTree(GetGameTreeFileWriter(plngGameID))
     End Sub
 
     ''' <summary>
@@ -480,10 +508,12 @@ Public Class clsFlagCalculator
         If pobjWriter IsNot Nothing Then
             pobjWriter.Write(strResult)
         Else
-            Console.Write(strResult)
+            Print(strResult)
         End If
 
         PrintGameStatusRecDown(mobjRoot, 0, pobjWriter)
+
+        If pobjWriter IsNot Nothing Then pobjWriter.Close()
     End Sub
 
     ''' <summary>
@@ -521,6 +551,9 @@ Public Class clsFlagCalculator
         Dim objResultStatus As clsStatusSnapshot
         Dim intStateIdx As Integer
 
+        Dim intPrintIdx As Integer = 0
+        'Dim blnPrint As Boolean
+
         'Create the root node (both flags in base, no timers set, no parent)
         mobjRoot = New clsStatusSnapshot(True, True, 0, 0, 0, 0)
 
@@ -528,11 +561,19 @@ Public Class clsFlagCalculator
         mlstWorkingSet = New List(Of clsStatusSnapshot)
         mlstWorkingSet.Add(mobjRoot)
 
-        Console.Write("with: " & dtGameEvents.Rows.Count & " events ")
+        Print("with: " & dtGameEvents.Rows.Count & " events... ", False)
 
         'Walk the game events and do the initial flag calculations
         For intIdx As Integer = 0 To dtGameEvents.Rows.Count - 1
+            RaiseEvent GameEventParsed(intIdx, dtGameEvents.Rows.Count)
+
+            'blnPrint = True
             'Print("On event: " & intIdx & " of " & dtGameEvents.Rows.Count - 1)
+
+            'If lngCurrentLineNo = 37992 Then
+            'Dim i As Int16
+            'i = 48
+            'End If
 
             'Store current line info
             drCurrentLine = dtGameEvents.Rows(intIdx)
@@ -607,9 +648,9 @@ Public Class clsFlagCalculator
 
             'Loop over all current leaf nodes
             Do While intStateIdx < lstPotentialStatesToExamine.Count
-                If intStateIdx Mod 500 = 0 Then
-                    'Print("examining node: " & intStateIdx & " of " & lstPotentialStatesToExamine.Count)
-                End If
+                'If intStateIdx Mod 500 = 0 Then
+                'Print("examining node: " & intStateIdx & " of " & lstPotentialStatesToExamine.Count)
+                'End If
 
                 'Grab current status
                 objCurrentStatus = lstPotentialStatesToExamine(intStateIdx)
@@ -715,33 +756,28 @@ Public Class clsFlagCalculator
                                                 'Remove the current state from the working set: this is impossible.
                                                 'Can't have a recovery if the blue flag is in the base, can't have a 
                                                 'capture if the red holder isn't the first client.
-
-                                                'Blue Recovers
-                                                'objResultStatus = ProceedOnRecovery(objCurrentStatus, enuTeamType.Blue, _
-                                                '                        blnRedFlagInBase, blnBlueFlagInBase, _
-                                                '                        lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
-                                                '                        lngRedFlagResetTime, lngBlueFlagResetTime, _
-                                                '                        lngEventID, lngGameID, _
-                                                '                        lngEventTime, lngLineNo, strEventType, _
-                                                '                        lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
-                                                '                        strItemName, strWeaponName)
-                                                'mlstWorkingSet.Add(objResultStatus)
                                                 PruneImpossibleBranch(objCurrentStatus)
                                                 intStateIdx += 1
                                             End If
                                         Else
-                                            'Blue Recovers
-                                            objResultStatus = ProceedOnRecovery(objCurrentStatus, enuTeamType.Blue, _
-                                                                    blnRedFlagInBase, blnBlueFlagInBase, _
-                                                                    lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
-                                                                    lngRedFlagResetTime, lngBlueFlagResetTime, _
-                                                                    lngEventID, lngGameID, _
-                                                                    lngEventTime, lngLineNo, strEventType, _
-                                                                    lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
-                                                                    strItemName, strWeaponName)
-                                            mlstWorkingSet.Add(objResultStatus)
-                                            mlstWorkingSet.Remove(objCurrentStatus)
-                                            intStateIdx += 1
+                                            If lngBlueFlagHolderClientID = 0 Then
+                                                'Blue Recovers
+                                                objResultStatus = ProceedOnRecovery(objCurrentStatus, enuTeamType.Blue, _
+                                                                        blnRedFlagInBase, blnBlueFlagInBase, _
+                                                                        lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
+                                                                        lngRedFlagResetTime, lngBlueFlagResetTime, _
+                                                                        lngEventID, lngGameID, _
+                                                                        lngEventTime, lngLineNo, strEventType, _
+                                                                        lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
+                                                                        strItemName, strWeaponName)
+                                                mlstWorkingSet.Add(objResultStatus)
+                                                mlstWorkingSet.Remove(objCurrentStatus)
+                                                intStateIdx += 1
+                                            Else
+                                                'Can't recover a flag being held
+                                                PruneImpossibleBranch(objCurrentStatus)
+                                                intStateIdx += 1
+                                            End If
                                         End If
                                     Case Else
                                         Throw New Exception("Other team type is invalid for flag touch: " & enuClientTeam1)
@@ -768,33 +804,28 @@ Public Class clsFlagCalculator
                                                 'Remove the current state from the working set: this is impossible.
                                                 'Can't have a recovery if the red flag is in the base, can't have a 
                                                 'capture if the blue holder isn't the first client.
-
-                                                'Red Recovers
-                                                'objResultStatus = ProceedOnRecovery(objCurrentStatus, enuTeamType.Red, _
-                                                '                        blnRedFlagInBase, blnBlueFlagInBase, _
-                                                '                        lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
-                                                '                        lngRedFlagResetTime, lngBlueFlagResetTime, _
-                                                '                        lngEventID, lngGameID, _
-                                                '                        lngEventTime, lngLineNo, strEventType, _
-                                                '                        lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
-                                                '                        strItemName, strWeaponName)
-                                                'mlstWorkingSet.Add(objResultStatus)
                                                 PruneImpossibleBranch(objCurrentStatus)
                                                 intStateIdx += 1
                                             End If
                                         Else
-                                            'Red Recovers
-                                            objResultStatus = ProceedOnRecovery(objCurrentStatus, enuTeamType.Red, _
-                                                                    blnRedFlagInBase, blnBlueFlagInBase, _
-                                                                    lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
-                                                                    lngRedFlagResetTime, lngBlueFlagResetTime, _
-                                                                    lngEventID, lngGameID, _
-                                                                    lngEventTime, lngLineNo, strEventType, _
-                                                                    lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
-                                                                    strItemName, strWeaponName)
-                                            mlstWorkingSet.Add(objResultStatus)
-                                            mlstWorkingSet.Remove(objCurrentStatus)
-                                            intStateIdx += 1
+                                            If lngRedFlagHolderClientID = 0 Then
+                                                'Red Recovers
+                                                objResultStatus = ProceedOnRecovery(objCurrentStatus, enuTeamType.Red, _
+                                                                        blnRedFlagInBase, blnBlueFlagInBase, _
+                                                                        lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
+                                                                        lngRedFlagResetTime, lngBlueFlagResetTime, _
+                                                                        lngEventID, lngGameID, _
+                                                                        lngEventTime, lngLineNo, strEventType, _
+                                                                        lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
+                                                                        strItemName, strWeaponName)
+                                                mlstWorkingSet.Add(objResultStatus)
+                                                mlstWorkingSet.Remove(objCurrentStatus)
+                                                intStateIdx += 1
+                                            Else
+                                                'Can't recover a flag being held
+                                                PruneImpossibleBranch(objCurrentStatus)
+                                                intStateIdx += 1
+                                            End If
                                         End If
                                     Case enuTeamType.Blue
                                         'Blue touching red, steal or pickup
@@ -839,7 +870,7 @@ Public Class clsFlagCalculator
                                     'Red player holding blue flag dying: need to consider whether or not this
                                     'causes the flag to be automatically reset and add both possibilities to
                                     'the working set
-                                    objResultStatus = BranchOnFlagHolderDiesWithReset(objCurrentStatus, enuTeamType.Red, _
+                                    objResultStatus = BranchOnEndOfFlagHoldingWithReset(objCurrentStatus, enuTeamType.Red, _
                                                                     blnRedFlagInBase, blnBlueFlagInBase, _
                                                                     lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
                                                                     lngRedFlagResetTime, lngBlueFlagResetTime, _
@@ -849,7 +880,7 @@ Public Class clsFlagCalculator
                                                                     strItemName, strWeaponName)
                                     mlstWorkingSet.Add(objResultStatus)
 
-                                    objResultStatus = BranchOnFlagHolderDiesWithoutReset(objCurrentStatus, enuTeamType.Red, _
+                                    objResultStatus = BranchOnEndOfFlagHoldingWithoutReset(objCurrentStatus, enuTeamType.Red, _
                                                                     blnRedFlagInBase, blnBlueFlagInBase, _
                                                                     lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
                                                                     lngRedFlagResetTime, lngBlueFlagResetTime, _
@@ -865,6 +896,7 @@ Public Class clsFlagCalculator
                                 Else
                                     'Event doesn't affect flag, so move to next node in current working set
                                     intStateIdx += 1
+                                    'blnPrint = False
                                 End If
                             Case enuTeamType.Blue
                                 'Blue player dying
@@ -872,7 +904,7 @@ Public Class clsFlagCalculator
                                     'Blue player holding red flag dying: need to consider whether or not this
                                     'causes the flag to be automatically reset and add both possibilities to
                                     'the working set
-                                    objResultStatus = BranchOnFlagHolderDiesWithReset(objCurrentStatus, enuTeamType.Blue, _
+                                    objResultStatus = BranchOnEndOfFlagHoldingWithReset(objCurrentStatus, enuTeamType.Blue, _
                                                                     blnRedFlagInBase, blnBlueFlagInBase, _
                                                                     lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
                                                                     lngRedFlagResetTime, lngBlueFlagResetTime, _
@@ -882,7 +914,7 @@ Public Class clsFlagCalculator
                                                                     strItemName, strWeaponName)
                                     mlstWorkingSet.Add(objResultStatus)
 
-                                    objResultStatus = BranchOnFlagHolderDiesWithoutReset(objCurrentStatus, enuTeamType.Blue, _
+                                    objResultStatus = BranchOnEndOfFlagHoldingWithoutReset(objCurrentStatus, enuTeamType.Blue, _
                                                                     blnRedFlagInBase, blnBlueFlagInBase, _
                                                                     lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
                                                                     lngRedFlagResetTime, lngBlueFlagResetTime, _
@@ -898,13 +930,17 @@ Public Class clsFlagCalculator
                                 Else
                                     'Event doesn't affect flag, so move to next node in current working set
                                     intStateIdx += 1
+                                    'blnPrint = False
                                 End If
                         End Select
                     Case "END"
                         Select Case enuClientTeam1
                             Case enuTeamType.Red
                                 If lngBlueFlagHolderClientID = lngClientID1 Then
-                                    objResultStatus = ProceedOnClientEnd(objCurrentStatus, enuTeamType.Red, _
+                                    'Red player holding blue flag ending: need to consider whether or not this
+                                    'causes the flag to be automatically reset and add both possibilities to
+                                    'the working set
+                                    objResultStatus = BranchOnEndOfFlagHoldingWithReset(objCurrentStatus, enuTeamType.Red, _
                                                                     blnRedFlagInBase, blnBlueFlagInBase, _
                                                                     lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
                                                                     lngRedFlagResetTime, lngBlueFlagResetTime, _
@@ -912,18 +948,32 @@ Public Class clsFlagCalculator
                                                                     lngEventTime, lngLineNo, strEventType, _
                                                                     lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
                                                                     strItemName, strWeaponName)
-
                                     mlstWorkingSet.Add(objResultStatus)
+
+                                    objResultStatus = BranchOnEndOfFlagHoldingWithoutReset(objCurrentStatus, enuTeamType.Red, _
+                                                                    blnRedFlagInBase, blnBlueFlagInBase, _
+                                                                    lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
+                                                                    lngRedFlagResetTime, lngBlueFlagResetTime, _
+                                                                    lngEventID, lngGameID, _
+                                                                    lngEventTime, lngLineNo, strEventType, _
+                                                                    lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
+                                                                    strItemName, strWeaponName)
+                                    mlstWorkingSet.Add(objResultStatus)
+
                                     mlstWorkingSet.Remove(objCurrentStatus)
 
                                     intStateIdx += 1
                                 Else
                                     'Event doesn't affect flag, so move to next node in current working set
                                     intStateIdx += 1
+                                    'blnPrint = False
                                 End If
                             Case enuTeamType.Blue
                                 If lngRedFlagHolderClientID = lngClientID1 Then
-                                    objResultStatus = ProceedOnClientEnd(objCurrentStatus, enuTeamType.Blue, _
+                                    'Blue player holding red flag ending: need to consider whether or not this
+                                    'causes the flag to be automatically reset and add both possibilities to
+                                    'the working set
+                                    objResultStatus = BranchOnEndOfFlagHoldingWithReset(objCurrentStatus, enuTeamType.Blue, _
                                                                     blnRedFlagInBase, blnBlueFlagInBase, _
                                                                     lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
                                                                     lngRedFlagResetTime, lngBlueFlagResetTime, _
@@ -931,31 +981,97 @@ Public Class clsFlagCalculator
                                                                     lngEventTime, lngLineNo, strEventType, _
                                                                     lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
                                                                     strItemName, strWeaponName)
-
                                     mlstWorkingSet.Add(objResultStatus)
+
+                                    objResultStatus = BranchOnEndOfFlagHoldingWithoutReset(objCurrentStatus, enuTeamType.Blue, _
+                                                                    blnRedFlagInBase, blnBlueFlagInBase, _
+                                                                    lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
+                                                                    lngRedFlagResetTime, lngBlueFlagResetTime, _
+                                                                    lngEventID, lngGameID, _
+                                                                    lngEventTime, lngLineNo, strEventType, _
+                                                                    lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
+                                                                    strItemName, strWeaponName)
+                                    mlstWorkingSet.Add(objResultStatus)
+
                                     mlstWorkingSet.Remove(objCurrentStatus)
 
                                     intStateIdx += 1
                                 Else
                                     'Event doesn't affect flag, so move to next node in current working set
                                     intStateIdx += 1
+                                    'blnPrint = False
                                 End If
                             Case Else
                                 'Spectator leaving
                                 'Event doesn't affect flag, so move to next node in current working set
                                 intStateIdx += 1
+                                'blnPrint = False
+                        End Select
+                    Case "NUMBERCHANGE"
+                        Select Case enuClientTeam1
+                            Case enuTeamType.Red
+                                If lngBlueFlagHolderClientID = lngClientID1 Then
+                                    objResultStatus = ProceedOnHolderClientIDChange(objCurrentStatus, enuTeamType.Red, _
+                                                                        blnRedFlagInBase, blnBlueFlagInBase, _
+                                                                        lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
+                                                                        lngRedFlagResetTime, lngBlueFlagResetTime, _
+                                                                        lngEventID, lngGameID, _
+                                                                        lngEventTime, lngLineNo, strEventType, _
+                                                                        lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
+                                                                        strItemName, strWeaponName)
+                                    mlstWorkingSet.Add(objResultStatus)
+                                    mlstWorkingSet.Remove(objCurrentStatus)
+
+                                    intStateIdx += 1
+                                Else
+                                    'Event doesn't affect flag, so move to next node in current working set
+                                    intStateIdx += 1
+                                    'blnPrint = False
+                                End If
+                            Case enuTeamType.Blue
+                                If lngRedFlagHolderClientID = lngClientID1 Then
+                                    objResultStatus = ProceedOnHolderClientIDChange(objCurrentStatus, enuTeamType.Blue, _
+                                                                        blnRedFlagInBase, blnBlueFlagInBase, _
+                                                                        lngRedFlagHolderClientID, lngBlueFlagHolderClientID, _
+                                                                        lngRedFlagResetTime, lngBlueFlagResetTime, _
+                                                                        lngEventID, lngGameID, _
+                                                                        lngEventTime, lngLineNo, strEventType, _
+                                                                        lngClientID1, lngClientID2, enuClientTeam1, enuClientTeam2, _
+                                                                        strItemName, strWeaponName)
+                                    mlstWorkingSet.Add(objResultStatus)
+                                    mlstWorkingSet.Remove(objCurrentStatus)
+
+                                    intStateIdx += 1
+                                Else
+                                    'Event doesn't affect flag, so move to next node in current working set
+                                    intStateIdx += 1
+                                    'blnPrint = False
+                                End If
+                            Case Else
+                                'Spectator number changing
+                                'Event doesn't affect flag, so move to next node in current working set
+                                intStateIdx += 1
+                                'blnPrint = False
                         End Select
                     Case Else
                         Throw New Exception("Unknown event type: " & strEventType)
                 End Select
             Loop
 
+            'If blnPrint Then
             'PruneDuplicatesFromWorkingSet()
             'PrintGameStatusTree()
             'PrintFirstBranch()
+            'PrintTreeToFile(intPrintIdx)
+            'intPrintIdx += 1
+            'End If
+
+            'blnPrint = False
         Next
         'Print("BEFORE:")
         'PrintGameStatusTree()
+
+        'PrintTreeToFile()
 
         PruneBranchesNotTallying(plngGameID)
 
@@ -1021,7 +1137,7 @@ Public Class clsFlagCalculator
         If pobjWriter IsNot Nothing Then
             pobjWriter.Write(strResult)
         Else
-            Console.Write(strResult)
+            Print(strResult)
         End If
 
         If lstChildStatusNodes.Count > 0 Then
@@ -1043,7 +1159,7 @@ Public Class clsFlagCalculator
         If pobjWriter IsNot Nothing Then
             pobjWriter.Write(strResult)
         Else
-            Console.Write(strResult)
+            Print(strResult)
         End If
 
         For Each objChild As clsStatusSnapshot In lstChildStatusNodes
@@ -1059,7 +1175,7 @@ Public Class clsFlagCalculator
         If pobjWriter IsNot Nothing Then
             pobjWriter.Write(strResult)
         Else
-            Console.Write(strResult)
+            Print(strResult)
         End If
 
         If pobjNode.Parent IsNot Nothing Then
@@ -1081,7 +1197,7 @@ Public Class clsFlagCalculator
                         Case enuTeamType.Blue
                             strResult &= "BLUE "
                     End Select
-                    strResult &= "(" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
                     strResult &= "CAPTURES "
                 Case enuSignificanceType.CarrierClientEnd
                     Select Case pobjNode.Parent.Client1Team
@@ -1090,7 +1206,7 @@ Public Class clsFlagCalculator
                         Case enuTeamType.Blue
                             strResult &= "BLUE "
                     End Select
-                    strResult &= "(" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
                     strResult &= "CLIENT CARRIER OF "
                     Select Case pobjNode.Parent.Client1Team
                         Case enuTeamType.Red
@@ -1106,7 +1222,7 @@ Public Class clsFlagCalculator
                         Case enuTeamType.Blue
                             strResult &= "BLUE "
                     End Select
-                    strResult &= "(" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
                     strResult &= "KILLS "
                     Select Case pobjNode.Parent.Client2Team
                         Case enuTeamType.Red
@@ -1114,7 +1230,7 @@ Public Class clsFlagCalculator
                         Case enuTeamType.Blue
                             strResult &= "BLUE "
                     End Select
-                    strResult &= "(" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
+                    strResult &= pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
                     strResult &= "CARRIER OF "
                     Select Case pobjNode.Parent.Client2Team
                         Case enuTeamType.Red
@@ -1130,7 +1246,7 @@ Public Class clsFlagCalculator
                         Case enuTeamType.Blue
                             strResult &= "BLUE "
                     End Select
-                    strResult &= "(" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
                     strResult &= "KILLS "
                     Select Case pobjNode.Parent.Client2Team
                         Case enuTeamType.Red
@@ -1138,7 +1254,7 @@ Public Class clsFlagCalculator
                         Case enuTeamType.Blue
                             strResult &= "BLUE "
                     End Select
-                    strResult &= "(" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
+                    strResult &= pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
                     strResult &= "CARRIER OF "
                     Select Case pobjNode.Parent.Client2Team
                         Case enuTeamType.Red
@@ -1154,7 +1270,7 @@ Public Class clsFlagCalculator
                         Case enuTeamType.Blue
                             strResult &= "BLUE "
                     End Select
-                    strResult &= "(" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
                     strResult &= "PICKS UP "
                     Select Case pobjNode.Parent.Client1Team
                         Case enuTeamType.Red
@@ -1169,7 +1285,7 @@ Public Class clsFlagCalculator
                         Case enuTeamType.Blue
                             strResult &= "BLUE "
                     End Select
-                    strResult &= "(" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
                     strResult &= "RECOVERS "
                     Select Case pobjNode.Parent.Client1Team
                         Case enuTeamType.Red
@@ -1188,7 +1304,7 @@ Public Class clsFlagCalculator
                         Case enuTeamType.Blue
                             strResult &= "BLUE "
                     End Select
-                    strResult &= "(" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
                     strResult &= "STEALS "
                     Select Case pobjNode.Parent.Client1Team
                         Case enuTeamType.Red
@@ -1196,6 +1312,31 @@ Public Class clsFlagCalculator
                         Case enuTeamType.Blue
                             strResult &= "RED FLAG "
                     End Select
+                Case enuSignificanceType.CarrierClientNumberChange
+                    Select Case pobjNode.Parent.Client1Team
+                        Case enuTeamType.Red
+                            strResult &= "RED "
+                        Case enuTeamType.Blue
+                            strResult &= "BLUE "
+                    End Select
+                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                    strResult &= "ID CHANGES TO " & pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
+                Case enuSignificanceType.CarrierClientTeamChange
+                    Select Case pobjNode.Parent.Client1Team
+                        Case enuTeamType.Red
+                            strResult &= "RED "
+                        Case enuTeamType.Blue
+                            strResult &= "BLUE "
+                    End Select
+                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                    strResult &= "TEAM CHANGES TO "
+                    Select Case pobjNode.Parent.Client2Team
+                        Case enuTeamType.Red
+                            strResult &= "RED "
+                        Case enuTeamType.Blue
+                            strResult &= "BLUE "
+                    End Select
+                    strResult &= pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
                 Case Else
                     Throw New Exception("Unknown event cause!")
             End Select
@@ -1205,8 +1346,8 @@ Public Class clsFlagCalculator
         strResult &= " ->"
         strResult &= vbCrLf
 
-        strResult &= TabOut(pintLevel) & "NODE: " & pobjNode.NodeID & " Rbase: " & CStr(IIf(pobjNode.RedFlagInBase, "Y", "N")) & " Rhold: " & GetClientLogID(pobjNode.RedFlagHolderClientID) & _
-                " Bbase: " & CStr(IIf(pobjNode.BlueFlagInBase, "Y", "N")) & " Bhold: " & GetClientLogID(pobjNode.BlueFlagHolderClientID) & " Rtime: " & pobjNode.RedFlagResetTime & " Btime: " & pobjNode.BlueFlagResetTime & vbCrLf
+        strResult &= TabOut(pintLevel) & "NODE: " & pobjNode.NodeID & " Rbase: " & CStr(IIf(pobjNode.RedFlagInBase, "Y", "N")) & " Rhold: " & pobjNode.RedFlagHolderClientID & " (" & GetClientLogID(pobjNode.RedFlagHolderClientID) & ") " & _
+                "Bbase: " & CStr(IIf(pobjNode.BlueFlagInBase, "Y", "N")) & " Bhold: " & pobjNode.BlueFlagHolderClientID & " (" & GetClientLogID(pobjNode.BlueFlagHolderClientID) & ") Rtime: " & pobjNode.RedFlagResetTime & " Btime: " & pobjNode.BlueFlagResetTime & vbCrLf
 
         'Recurse on each child, increasing depth of recusion
         strResult &= TabOut(pintLevel) & "has " & pobjNode.Children.Count & " children: " & vbCrLf
@@ -1266,8 +1407,8 @@ Public Class clsFlagCalculator
         End If
 
         'Print("Pruning from node with id: " & pobjBeginNode.NodeID)
-        'Print("BEFORE:")
-        'PrintGameStatusTree()
+        'Print("BEFORE PRINTING TO FILE WITH -1:")
+        'PrintTreeToFile(-1)
 
         'Walk the tree to find the clip node
         Do Until objClipNode IsNot Nothing
@@ -1333,18 +1474,19 @@ Public Class clsFlagCalculator
                 If plngBlueFlagHolderClientID = 0 Then Throw New Exception("Can't recover flag not being held!")
 
                 Return CreateNewPotentialStatus(pobjCurrentStatus, enuSignificanceType.CarrierClientEnd, _
-                                                True, pblnBlueFlagInBase, 0, plngBlueFlagHolderClientID, _
-                                                0, plngBlueFlagResetTime, plngEventID, _
+                                                pblnRedFlagInBase, True, plngRedFlagHolderClientID, 0, _
+                                                plngRedFlagResetTime, 0, plngEventID, _
                                                 plngGameID, plngEventTime, plngLineNo, pstrEventType, _
                                                 plngClientID1, plngClientID2, penuClientTeam1, penuClientTeam2, _
                                                 pstrItemName, pstrWeaponName)
+
             Case enuTeamType.Blue
                 If pblnRedFlagInBase Then Throw New Exception("Can't end with flag already in base!")
                 If plngRedFlagHolderClientID = 0 Then Throw New Exception("Can't recover flag not being held!")
 
                 Return CreateNewPotentialStatus(pobjCurrentStatus, enuSignificanceType.CarrierClientEnd, _
-                                                pblnRedFlagInBase, True, plngRedFlagHolderClientID, 0, _
-                                                plngRedFlagResetTime, 0, plngEventID, _
+                                                True, pblnBlueFlagInBase, 0, plngBlueFlagHolderClientID, _
+                                                0, plngBlueFlagResetTime, plngEventID, _
                                                 plngGameID, plngEventTime, plngLineNo, pstrEventType, _
                                                 plngClientID1, plngClientID2, penuClientTeam1, penuClientTeam2, _
                                                 pstrItemName, pstrWeaponName)
@@ -1409,6 +1551,128 @@ Public Class clsFlagCalculator
             Case Else
                 Throw New Exception("Invalid team type for capture: " & penuTeam)
         End Select
+    End Function
+
+    ''' <summary>
+    ''' Calls CreateNewPotentialStatus() to branches a new status caused by a flag holder's id changing.
+    ''' </summary>
+    ''' <param name="pobjCurrentStatus">The current status.</param>
+    ''' <param name="penuTeam">The team which is has a player with id changing.</param>
+    ''' <param name="pblnRedFlagInBase">if set to <c>true</c> [red flag in base].</param>
+    ''' <param name="pblnBlueFlagInBase">if set to <c>true</c> [blue flag in base].</param>
+    ''' <param name="plngRedFlagHolderClientID">The red flag holder client ID.</param>
+    ''' <param name="plngBlueFlagHolderClientID">The blue flag holder client ID.</param>
+    ''' <param name="plngRedFlagResetTime">The red flag reset time.</param>
+    ''' <param name="plngBlueFlagResetTime">The blue flag reset time.</param>
+    ''' <param name="plngEventID">The event ID.</param>
+    ''' <param name="plngGameID">The game ID.</param>
+    ''' <param name="plngEventTime">The event time.</param>
+    ''' <param name="plngLineNo">The line no.</param>
+    ''' <param name="pstrEventType">Type of the event.</param>
+    ''' <param name="plngClientID1">The client I d1.</param>
+    ''' <param name="plngClientID2">The client I d2.</param>
+    ''' <param name="penuClientTeam1">The client team1.</param>
+    ''' <param name="penuClientTeam2">The client team2.</param>
+    ''' <param name="pstrItemName">Name of the item.</param>
+    ''' <param name="pstrWeaponName">Name of the weapon.</param>
+    ''' <returns>New result status snapshot object created at the end of the branch.</returns>
+    Private Function ProceedOnHolderClientIDChange(ByRef pobjCurrentStatus As clsStatusSnapshot, ByVal penuTeam As enuTeamType, _
+                                        ByVal pblnRedFlagInBase As Boolean, ByVal pblnBlueFlagInBase As Boolean, _
+                                        ByVal plngRedFlagHolderClientID As Long, ByVal plngBlueFlagHolderClientID As Long, _
+                                        ByVal plngRedFlagResetTime As Long, ByVal plngBlueFlagResetTime As Long, _
+                                        ByVal plngEventID As Long, ByVal plngGameID As Long, _
+                                        ByVal plngEventTime As Long, ByVal plngLineNo As Long, _
+                                        ByVal pstrEventType As String, ByVal plngClientID1 As Long, ByVal plngClientID2 As Long, _
+                                        ByVal penuClientTeam1 As enuTeamType, ByVal penuClientTeam2 As enuTeamType, _
+                                        ByVal pstrItemName As String, ByVal pstrWeaponName As String) As clsStatusSnapshot
+        If Not plngClientID1 < plngClientID2 Then Throw New Exception("New client id not greater than previous client id!")
+
+        Select Case penuTeam
+            Case enuTeamType.Red
+                If pblnBlueFlagInBase Then Throw New Exception("Blue flag currently in base!")
+                If plngBlueFlagHolderClientID <> plngClientID1 Then Throw New Exception("Only blue flag holder can cause holder id change!")
+
+                Return CreateNewPotentialStatus(pobjCurrentStatus, enuSignificanceType.CarrierClientNumberChange, _
+                                                pblnRedFlagInBase, False, plngRedFlagHolderClientID, plngClientID2, _
+                                                plngRedFlagResetTime, 0, plngEventID, _
+                                                plngGameID, plngEventTime, plngLineNo, pstrEventType, _
+                                                plngClientID1, plngClientID2, penuClientTeam1, penuClientTeam2, _
+                                                pstrItemName, pstrWeaponName)
+            Case enuTeamType.Blue
+                If pblnRedFlagInBase Then Throw New Exception("Red flag currently in base!")
+                If plngRedFlagHolderClientID <> plngClientID1 Then Throw New Exception("Only red flag holder can cause holder id change!")
+
+                Return CreateNewPotentialStatus(pobjCurrentStatus, enuSignificanceType.CarrierClientNumberChange, _
+                                                False, pblnBlueFlagInBase, plngClientID2, plngBlueFlagHolderClientID, _
+                                                0, plngBlueFlagResetTime, plngEventID, _
+                                                plngGameID, plngEventTime, plngLineNo, pstrEventType, _
+                                                plngClientID1, plngClientID2, penuClientTeam1, penuClientTeam2, _
+                                                pstrItemName, pstrWeaponName)
+            Case Else
+                Throw New Exception("Invalid team type for client number change: " & penuTeam)
+        End Select
+
+    End Function
+
+    ''' <summary>
+    ''' Calls CreateNewPotentialStatus() to branches a new status caused by a flag holder's team changing.
+    ''' </summary>
+    ''' <param name="pobjCurrentStatus">The current status.</param>
+    ''' <param name="penuTeam">The inital team of the player who is team changing.</param>
+    ''' <param name="pblnRedFlagInBase">if set to <c>true</c> [red flag in base].</param>
+    ''' <param name="pblnBlueFlagInBase">if set to <c>true</c> [blue flag in base].</param>
+    ''' <param name="plngRedFlagHolderClientID">The red flag holder client ID.</param>
+    ''' <param name="plngBlueFlagHolderClientID">The blue flag holder client ID.</param>
+    ''' <param name="plngRedFlagResetTime">The red flag reset time.</param>
+    ''' <param name="plngBlueFlagResetTime">The blue flag reset time.</param>
+    ''' <param name="plngEventID">The event ID.</param>
+    ''' <param name="plngGameID">The game ID.</param>
+    ''' <param name="plngEventTime">The event time.</param>
+    ''' <param name="plngLineNo">The line no.</param>
+    ''' <param name="pstrEventType">Type of the event.</param>
+    ''' <param name="plngClientID1">The client I d1.</param>
+    ''' <param name="plngClientID2">The client I d2.</param>
+    ''' <param name="penuClientTeam1">The client team1.</param>
+    ''' <param name="penuClientTeam2">The client team2.</param>
+    ''' <param name="pstrItemName">Name of the item.</param>
+    ''' <param name="pstrWeaponName">Name of the weapon.</param>
+    ''' <returns>New result status snapshot object created at the end of the branch.</returns>
+    Private Function ProceedOnHolderTeamChange(ByRef pobjCurrentStatus As clsStatusSnapshot, ByVal penuTeam As enuTeamType, _
+                                        ByVal pblnRedFlagInBase As Boolean, ByVal pblnBlueFlagInBase As Boolean, _
+                                        ByVal plngRedFlagHolderClientID As Long, ByVal plngBlueFlagHolderClientID As Long, _
+                                        ByVal plngRedFlagResetTime As Long, ByVal plngBlueFlagResetTime As Long, _
+                                        ByVal plngEventID As Long, ByVal plngGameID As Long, _
+                                        ByVal plngEventTime As Long, ByVal plngLineNo As Long, _
+                                        ByVal pstrEventType As String, ByVal plngClientID1 As Long, ByVal plngClientID2 As Long, _
+                                        ByVal penuClientTeam1 As enuTeamType, ByVal penuClientTeam2 As enuTeamType, _
+                                        ByVal pstrItemName As String, ByVal pstrWeaponName As String) As clsStatusSnapshot
+        If Not plngClientID1 < plngClientID2 Then Throw New Exception("New client id not greater than previous client id!")
+
+        Select Case penuTeam
+            Case enuTeamType.Red
+                If pblnBlueFlagInBase Then Throw New Exception("Blue flag currently in base!")
+                If plngBlueFlagHolderClientID <> plngClientID1 Then Throw New Exception("Only blue flag holder can cause holder team change!")
+
+                Return CreateNewPotentialStatus(pobjCurrentStatus, enuSignificanceType.CarrierClientTeamChange, _
+                                                pblnRedFlagInBase, True, plngRedFlagHolderClientID, 0, _
+                                                plngRedFlagResetTime, 0, plngEventID, _
+                                                plngGameID, plngEventTime, plngLineNo, pstrEventType, _
+                                                plngClientID1, plngClientID2, penuClientTeam1, penuClientTeam2, _
+                                                pstrItemName, pstrWeaponName)
+            Case enuTeamType.Blue
+                If pblnRedFlagInBase Then Throw New Exception("Red flag currently in base!")
+                If plngRedFlagHolderClientID <> plngClientID1 Then Throw New Exception("Only red flag holder can cause holder team change!")
+
+                Return CreateNewPotentialStatus(pobjCurrentStatus, enuSignificanceType.CarrierClientTeamChange, _
+                                                True, pblnBlueFlagInBase, 0, plngBlueFlagHolderClientID, _
+                                                0, plngBlueFlagResetTime, plngEventID, _
+                                                plngGameID, plngEventTime, plngLineNo, pstrEventType, _
+                                                plngClientID1, plngClientID2, penuClientTeam1, penuClientTeam2, _
+                                                pstrItemName, pstrWeaponName)
+            Case Else
+                Throw New Exception("Invalid team type for client team change: " & penuTeam)
+        End Select
+
     End Function
 
     ''' <summary>
@@ -1589,7 +1853,7 @@ Public Class clsFlagCalculator
     End Function
 
     ''' <summary>
-    ''' Calls CreateNewPotentialStatus() to branches a new status caused by a flag holder dying.
+    ''' Calls CreateNewPotentialStatus() to branches a new status caused by a flag holder dying/ending.
     ''' </summary>
     ''' <param name="pobjCurrentStatus">The current status.</param>
     ''' <param name="penuTeam">The team of the player who is dying.</param>
@@ -1611,7 +1875,7 @@ Public Class clsFlagCalculator
     ''' <param name="pstrItemName">Name of the item.</param>
     ''' <param name="pstrWeaponName">Name of the weapon.</param>
     ''' <returns>New result status snapshot object created at the end of the branch.</returns>
-    Private Function BranchOnFlagHolderDiesWithReset(ByRef pobjCurrentStatus As clsStatusSnapshot, ByVal penuTeam As enuTeamType, _
+    Private Function BranchOnEndOfFlagHoldingWithReset(ByRef pobjCurrentStatus As clsStatusSnapshot, ByVal penuTeam As enuTeamType, _
                                         ByVal pblnRedFlagInBase As Boolean, ByVal pblnBlueFlagInBase As Boolean, _
                                         ByVal plngRedFlagHolderClientID As Long, ByVal plngBlueFlagHolderClientID As Long, _
                                         ByVal plngRedFlagResetTime As Long, ByVal plngBlueFlagResetTime As Long, _
@@ -1623,9 +1887,10 @@ Public Class clsFlagCalculator
         Select Case penuTeam
             Case enuTeamType.Red
                 If pblnBlueFlagInBase Then Throw New Exception("Blue flag is in the base!")
-                If plngBlueFlagHolderClientID <> plngClientID2 Then Throw New Exception("Blue flag holder not the victim!")
+                If pstrEventType.Equals("KILL") And plngBlueFlagHolderClientID <> plngClientID2 Then Throw New Exception("Blue flag holder not the victim!")
+                If pstrEventType.Equals("END") And plngBlueFlagHolderClientID <> plngClientID1 Then Throw New Exception("Blue flag holder not ending!")
 
-                Return CreateNewPotentialStatus(pobjCurrentStatus, enuSignificanceType.CarrierKillWithReset, _
+                Return CreateNewPotentialStatus(pobjCurrentStatus, CType(IIf(pstrEventType.Equals("KILL"), enuSignificanceType.CarrierKillWithReset, enuSignificanceType.CarrierClientEnd), enuSignificanceType), _
                                 pblnRedFlagInBase, True, plngRedFlagHolderClientID, 0, _
                                 plngRedFlagResetTime, 0, plngEventID, _
                                 plngGameID, plngEventTime, plngLineNo, pstrEventType, _
@@ -1633,9 +1898,10 @@ Public Class clsFlagCalculator
                                 pstrItemName, pstrWeaponName)
             Case enuTeamType.Blue
                 If pblnRedFlagInBase Then Throw New Exception("Red flag is in the base!")
-                If plngRedFlagHolderClientID <> plngClientID2 Then Throw New Exception("Red flag holder not the victim!")
+                If pstrEventType.Equals("KILL") And plngRedFlagHolderClientID <> plngClientID2 Then Throw New Exception("Red flag holder not the victim!")
+                If pstrEventType.Equals("END") And plngRedFlagHolderClientID <> plngClientID1 Then Throw New Exception("Red flag holder not ending!")
 
-                Return CreateNewPotentialStatus(pobjCurrentStatus, enuSignificanceType.CarrierKillWithReset, _
+                Return CreateNewPotentialStatus(pobjCurrentStatus, CType(IIf(pstrEventType.Equals("KILL"), enuSignificanceType.CarrierKillWithReset, enuSignificanceType.CarrierClientEnd), enuSignificanceType), _
                                                 True, pblnBlueFlagInBase, 0, plngBlueFlagHolderClientID, _
                                                 0, plngBlueFlagResetTime, plngEventID, _
                                                 plngGameID, plngEventTime, plngLineNo, pstrEventType, _
@@ -1647,7 +1913,7 @@ Public Class clsFlagCalculator
     End Function
 
     ''' <summary>
-    ''' Calls CreateNewPotentialStatus() to branches a new status caused by a flag holder dying.
+    ''' Calls CreateNewPotentialStatus() to branches a new status caused by a flag holder dying/ending.
     ''' </summary>
     ''' <param name="pobjCurrentStatus">The current status.</param>
     ''' <param name="penuTeam">The team of the player who is dying.</param>
@@ -1669,7 +1935,7 @@ Public Class clsFlagCalculator
     ''' <param name="pstrItemName">Name of the item.</param>
     ''' <param name="pstrWeaponName">Name of the weapon.</param>
     ''' <returns>New result status snapshot object created at the end of the branch.</returns>
-    Private Function BranchOnFlagHolderDiesWithoutReset(ByRef pobjCurrentStatus As clsStatusSnapshot, ByVal penuTeam As enuTeamType, _
+    Private Function BranchOnEndOfFlagHoldingWithoutReset(ByRef pobjCurrentStatus As clsStatusSnapshot, ByVal penuTeam As enuTeamType, _
                                         ByVal pblnRedFlagInBase As Boolean, ByVal pblnBlueFlagInBase As Boolean, _
                                         ByVal plngRedFlagHolderClientID As Long, ByVal plngBlueFlagHolderClientID As Long, _
                                         ByVal plngRedFlagResetTime As Long, ByVal plngBlueFlagResetTime As Long, _
@@ -1681,9 +1947,10 @@ Public Class clsFlagCalculator
         Select Case penuTeam
             Case enuTeamType.Red
                 If pblnBlueFlagInBase Then Throw New Exception("Blue flag is in the base!")
-                If plngBlueFlagHolderClientID <> plngClientID2 Then Throw New Exception("Blue flag holder not the victim!")
+                If pstrEventType.Equals("KILL") And plngBlueFlagHolderClientID <> plngClientID2 Then Throw New Exception("Blue flag holder not the victim!")
+                If pstrEventType.Equals("END") And plngBlueFlagHolderClientID <> plngClientID1 Then Throw New Exception("Blue flag holder not ending!")
 
-                Return CreateNewPotentialStatus(pobjCurrentStatus, enuSignificanceType.CarrierKillWithDrop, _
+                Return CreateNewPotentialStatus(pobjCurrentStatus, CType(IIf(pstrEventType.Equals("KILL"), enuSignificanceType.CarrierKillWithDrop, enuSignificanceType.CarrierClientEnd), enuSignificanceType), _
                                                 pblnRedFlagInBase, pblnBlueFlagInBase, plngRedFlagHolderClientID, 0, _
                                                 plngRedFlagResetTime, plngEventTime + 30, plngEventID, _
                                                 plngGameID, plngEventTime, plngLineNo, pstrEventType, _
@@ -1691,9 +1958,10 @@ Public Class clsFlagCalculator
                                                 pstrItemName, pstrWeaponName)
             Case enuTeamType.Blue
                 If pblnRedFlagInBase Then Throw New Exception("Red flag is in the base!")
-                If plngRedFlagHolderClientID <> plngClientID2 Then Throw New Exception("Red flag holder not the victim!")
+                If pstrEventType.Equals("KILL") And plngRedFlagHolderClientID <> plngClientID2 Then Throw New Exception("Red flag holder not the victim!")
+                If pstrEventType.Equals("END") And plngRedFlagHolderClientID <> plngClientID1 Then Throw New Exception("Red flag holder not ending!")
 
-                Return CreateNewPotentialStatus(pobjCurrentStatus, enuSignificanceType.CarrierKillWithDrop, _
+                Return CreateNewPotentialStatus(pobjCurrentStatus, CType(IIf(pstrEventType.Equals("KILL"), enuSignificanceType.CarrierKillWithDrop, enuSignificanceType.CarrierClientEnd), enuSignificanceType), _
                                                 pblnRedFlagInBase, pblnBlueFlagInBase, 0, plngBlueFlagHolderClientID, _
                                                 plngEventTime + 30, plngBlueFlagResetTime, plngEventID, _
                                                 plngGameID, plngEventTime, plngLineNo, pstrEventType, _
@@ -1874,7 +2142,7 @@ Public Class clsFlagCalculator
         Dim strSQL As String
         Dim sqlcmdGet As SqlCommand
 
-        strSQL = "SELECT IsNull(m.MapAlias, m.MapName) AS Result " & _
+        strSQL = "SELECT Calculations.fnGetMapName(m.MapID, 1) AS Result " & _
                 "FROM CalculatedData.Map m " & _
                 "   INNER JOIN CalculatedData.Game g ON g.fkMapID = m.MapID " & _
                 "WHERE g.GameID = @GameID "
@@ -1929,6 +2197,60 @@ Public Class clsFlagCalculator
         End If
     End Function
 
+    Private Sub MarkFlagCalculationsComplete(ByVal plngGameID As Long, ByVal pblnSuccess As Boolean)
+        Dim strSQL As String
+        Dim sqlcmdMark As SqlCommand
+
+        If pblnSuccess Then
+            strSQL = "UPDATE CalculatedData.Game " & _
+                    "SET IsFlagCalculationsComplete = 1 " & _
+                    "WHERE GameID = @GameID "
+        Else
+            strSQL = "UPDATE CalculatedData.Game " & _
+                    "SET IsFlagCalculationsFailed = 1 " & _
+                    "WHERE GameID = @GameID "
+        End If
+
+        sqlcmdMark = New SqlCommand(strSQL, mcxnStatsDB)
+        sqlcmdMark.Parameters.AddWithValue("GameID", plngGameID)
+
+        sqlcmdMark.ExecuteNonQuery()
+    End Sub
+
+    Private Function IsFlagCalculationsComplete(ByVal plngGameID As Long) As Boolean
+        Dim strSQL As String
+        Dim sqlcmdGet As SqlCommand
+        Dim blnComplete As Boolean
+
+        strSQL = "SELECT IsNull(g.IsFlagCalculationsComplete, 0)  " & _
+                "FROM CalculatedData.Game g " & _
+                "WHERE g.GameID = @GameID "
+
+        sqlcmdGet = New SqlCommand(strSQL, mcxnStatsDB)
+        sqlcmdGet.Parameters.AddWithValue("GameID", plngGameID)
+
+        blnComplete = CBool(sqlcmdGet.ExecuteScalar())
+
+        Return blnComplete
+    End Function
+
+    Private Function IsCompleteInLog(ByVal plngGameID As Long) As Boolean
+        Dim strSQL As String
+        Dim sqlcmdGet As SqlCommand
+        Dim blnComplete As Boolean
+
+        strSQL = "SELECT IsNull(g.IsCompleteInLog, 0)  " & _
+                "FROM CalculatedData.Game g " & _
+                "WHERE g.GameID = @GameID "
+
+        sqlcmdGet = New SqlCommand(strSQL, mcxnStatsDB)
+        sqlcmdGet.Parameters.AddWithValue("GameID", plngGameID)
+
+        blnComplete = CBool(sqlcmdGet.ExecuteScalar())
+
+        Return blnComplete
+    End Function
+
     Private Function GetRedScore(ByVal plngGameID As Long) As Integer
         Dim strSQL As String
         Dim sqlcmdGet As SqlCommand
@@ -1963,6 +2285,37 @@ Public Class clsFlagCalculator
         sqlcmdGet.Parameters.AddWithValue("ClientID", plngClientID)
 
         Return CInt(sqlcmdGet.ExecuteScalar())
+    End Function
+
+    ''' <summary>
+    ''' Verifies the game tree output path exists, creates it if it doesn't.
+    ''' </summary>
+    Private Function VerifyGameTreeOutputPath() As String
+        Dim strBaseOutputPath As String = ConfigurationManager.AppSettings("BaseOutputFilesPath")
+        Dim strGamesTreeOutputFilesRelPath = ConfigurationManager.AppSettings("GamesTreeOutputFilesRelPath")
+        Dim strGameTreeOutputFilesFullPath As String = My.Computer.FileSystem.CombinePath(strBaseOutputPath, strGamesTreeOutputFilesRelPath)
+
+        If Not My.Computer.FileSystem.DirectoryExists(strBaseOutputPath) Then
+            My.Computer.FileSystem.CreateDirectory(strBaseOutputPath)
+        End If
+        If Not My.Computer.FileSystem.DirectoryExists(strGameTreeOutputFilesFullPath) Then
+            My.Computer.FileSystem.CreateDirectory(strGameTreeOutputFilesFullPath)
+        End If
+
+        Return strGameTreeOutputFilesFullPath
+    End Function
+
+    ''' <summary>
+    ''' Creates a file for writing named game-GAMEID.txt in the game tree output dir.
+    ''' Overwrites existing files.
+    ''' </summary>
+    ''' <param name="plngGameID">The game ID.</param>
+    ''' <returns>StreamWriter to the game file.</returns>
+    Private Function GetGameTreeFileWriter(ByVal plngGameID As Long) As StreamWriter
+        Dim strGameTreeFilePath As String = My.Computer.FileSystem.CombinePath(mstrGameTreeOutputPath, "game-" & plngGameID & ".txt")
+        Dim writer As New StreamWriter(New FileStream(strGameTreeFilePath, FileMode.Create))
+
+        Return writer
     End Function
 #End Region
 End Class

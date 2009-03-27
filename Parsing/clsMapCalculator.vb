@@ -40,11 +40,12 @@ Namespace LogParsing
 
             sqlcmdCalc = New SqlCommand("Calculations.spCreateMaps", mcxnStatsDB)
             sqlcmdCalc.CommandType = CommandType.StoredProcedure
+            sqlcmdCalc.CommandTimeout = 0
 
             sqlcmdCalc.ExecuteNonQuery()
 
             mobjTimer.StopTimer()
-            Print("Finished map calculations in " & mobjTimer.GetResultAsTimeString & ".")
+            Print("Finished map calculations in " & mobjTimer.GetResultAsTimeString & " (actual " & mobjTimer.GetElapsedAsTimeString & ").")
         End Sub
 #End Region
     End Class

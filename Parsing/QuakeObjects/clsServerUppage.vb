@@ -79,6 +79,7 @@ Namespace LogParsing.QuakeObjects
             Dim cmdWrite As SqlCommand = Nothing
             Dim trnWrite As SqlTransaction = Nothing
             Dim lngGameID As Long
+            Dim intNumGamesWritten As Integer = 0
 
             Try
                 'Begin tran and wrap inserts/updates so only 1 server uppage can spoil at a time
@@ -119,6 +120,7 @@ Namespace LogParsing.QuakeObjects
                             If lngGameID = 0 Then
                                 Throw New Exception("Game failed to write for server uppage: " & mlngServerUppageID & "!")
                             End If
+                            intNumGamesWritten += 1
                         End If
                     End If
                 Next
@@ -127,6 +129,8 @@ Namespace LogParsing.QuakeObjects
                 clsSystemSettings.SetSystemSetting("CurrentServerUppageID", CStr(mlngServerUppageID), trnWrite)
 
                 trnWrite.Commit()
+
+                Print("Wrote " & intNumGamesWritten & " new games to DB...")
                 Return mlngServerUppageID
             Catch ex As Exception
                 trnWrite.Rollback()

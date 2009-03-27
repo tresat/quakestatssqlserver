@@ -4,6 +4,8 @@ Option Strict On
 Imports System.Data.SqlClient
 Imports QuakeStats.Utilities.clsHighPerformanceTimer
 
+'TODO: Add server uppage adjacencies calculator, should be run before game adjacency determination.
+
 Namespace LogParsing
     Public Class clsAdjacencyCalculator
 #Region "Member Vars"
@@ -35,10 +37,34 @@ Namespace LogParsing
         Public Sub CalculateAllAdjacencies()
             CalculateGameAdjacencies()
 
+            CalculateInGameClientAdjacencies()
         End Sub
 #End Region
 
 #Region "Private Helpers"
+        ''' <summary>
+        ''' Calculates the in-game client adjacencies.  No dependancies.
+        ''' </summary>
+        Private Sub CalculateInGameClientAdjacencies()
+            Dim sqlcmdCalc As SqlCommand
+
+            mobjTimer.StartTimer()
+            Print("Beginning in-game client adjacency calculations...")
+
+            sqlcmdCalc = New SqlCommand("Calculations.spLinkClientsWithinGames", mcxnStatsDB)
+            sqlcmdCalc.CommandType = CommandType.StoredProcedure
+            sqlcmdCalc.CommandTimeout = 0
+
+            sqlcmdCalc.ExecuteNonQuery()
+
+            mobjTimer.StopTimer()
+            Print("Finished in-game client adjacency calculations in " & mobjTimer.GetResultAsTimeString & " (actual " & mobjTimer.GetElapsedAsTimeString & ").")
+        End Sub
+
+        ''' <summary>
+        ''' Calculates the game adjacencies.  Depends on the server adjacencies being
+        ''' already established.
+        ''' </summary>
         Private Sub CalculateGameAdjacencies()
             Dim sqlcmdCalc As SqlCommand
 
@@ -47,11 +73,12 @@ Namespace LogParsing
 
             sqlcmdCalc = New SqlCommand("Calculations.spLinkGames", mcxnStatsDB)
             sqlcmdCalc.CommandType = CommandType.StoredProcedure
+            sqlcmdCalc.CommandTimeout = 0
 
             sqlcmdCalc.ExecuteNonQuery()
 
             mobjTimer.StopTimer()
-            Print("Finished game adjacency calculations in " & mobjTimer.GetResultAsTimeString & ".")
+            Print("Finished game adjacency calculations in " & mobjTimer.GetResultAsTimeString & " (actual " & mobjTimer.GetElapsedAsTimeString & ").")
         End Sub
 #End Region
     End Class

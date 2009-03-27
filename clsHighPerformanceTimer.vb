@@ -4,10 +4,20 @@ Option Strict On
 Namespace Utilities
     Public Class clsHighPerformanceTimer
 
+#Region "Constants"
+        Const MINT_NUM_MILLISECONDS_IN_SECOND As Integer = 1000
+        Const MINT_NUM_SECONDS_IN_MINUTE As Integer = 60
+        Const MINT_NUM_MINUTES_IN_HOUR As Integer = 60
+#End Region
+
 #Region "Member Vars"
         Private mblnTimerRunning As Boolean
+
         Private mint64Start As Int64
         Private mint64Stop As Int64
+
+        Private mdtmStartTime As Date
+        Private mdtmStopTime As Date
 #End Region
 
 #Region "Constructors"
@@ -66,6 +76,7 @@ Namespace Utilities
                 Throw New Exception("Error: call to QueryPerformanceCounter() failed!")
             End If
 
+            mdtmStartTime = Now
             mblnTimerRunning = True
         End Sub
 
@@ -81,8 +92,29 @@ Namespace Utilities
                 Throw New Exception("Error: call to QueryPerformanceCounter() failed!")
             End If
 
+            mdtmStopTime = Now
             mblnTimerRunning = False
         End Sub
+
+        ''' <summary>
+        ''' Gets the elapsed (actual time) as time string.
+        ''' </summary>
+        ''' <returns>Time in form "X hrs, Y min, Z.ZZZZ sec"</returns>
+        Public Function GetElapsedAsTimeString() As String
+            Dim tsElapsed As TimeSpan
+            Dim lngHours As Long, lngMinutes As Long, lngSeconds As Long, lngMilliSeconds As Long
+
+            If mblnTimerRunning Then Throw New Exception("Timer still running!")
+
+            tsElapsed = mdtmStopTime.Subtract(mdtmStartTime)
+
+            lngHours = CLng(Math.Floor(tsElapsed.TotalHours))
+            lngMinutes = CLng(Math.Floor(tsElapsed.TotalMinutes)) - (MINT_NUM_MINUTES_IN_HOUR * lngHours)
+            lngSeconds = CLng(Math.Floor(tsElapsed.TotalSeconds)) - (MINT_NUM_MINUTES_IN_HOUR * MINT_NUM_SECONDS_IN_MINUTE * lngHours) - (MINT_NUM_SECONDS_IN_MINUTE * lngMinutes)
+            lngMilliSeconds = CLng(tsElapsed.TotalMilliseconds) - (MINT_NUM_MINUTES_IN_HOUR * MINT_NUM_SECONDS_IN_MINUTE * MINT_NUM_MILLISECONDS_IN_SECOND * lngHours) - (MINT_NUM_SECONDS_IN_MINUTE * MINT_NUM_MILLISECONDS_IN_SECOND * lngMinutes) - (MINT_NUM_MILLISECONDS_IN_SECOND * lngSeconds)
+
+            Return lngHours & " hrs, " & MakeXDigits(lngMinutes, 2) & " min, " & MakeXDigits(lngSeconds, 2) & "." & MakeXDigits(lngMilliSeconds, 4) & " sec"
+        End Function
 
         ''' <summary>
         ''' Gets the result in seconds.
@@ -112,10 +144,6 @@ Namespace Utilities
         ''' </summary>
         ''' <returns>Time in form "X hrs, Y min, Z.ZZZZ sec"</returns>
         Public Function GetResultAsTimeString() As String
-            Const NUM_MILLISECONDS_IN_SECOND As Integer = 1000
-            Const NUM_SECONDS_IN_MINUTE As Integer = 60
-            Const NUM_MINUTES_IN_HOUR As Integer = 60
-
             Dim int64ElapsedCount As Int64
             Dim int64Frequency As Int64
             Dim lngElapsedMilliSeconds As Long
@@ -130,15 +158,15 @@ Namespace Utilities
             QueryPerformanceFrequency(int64Frequency)
 
             'Round performance to closest millisecs
-            lngElapsedMilliSeconds = CLng((int64ElapsedCount / int64Frequency) * NUM_MILLISECONDS_IN_SECOND)
+            lngElapsedMilliSeconds = CLng((int64ElapsedCount / int64Frequency) * MINT_NUM_MILLISECONDS_IN_SECOND)
 
             'Calculate time values
-            lngHours = lngElapsedMilliSeconds \ (NUM_MINUTES_IN_HOUR * NUM_SECONDS_IN_MINUTE * NUM_MILLISECONDS_IN_SECOND)
-            lngElapsedMilliSeconds -= lngHours * (NUM_MINUTES_IN_HOUR * NUM_SECONDS_IN_MINUTE * NUM_MILLISECONDS_IN_SECOND)
-            lngMinutes = lngElapsedMilliSeconds \ (NUM_SECONDS_IN_MINUTE * NUM_MILLISECONDS_IN_SECOND)
-            lngElapsedMilliSeconds -= lngMinutes * (NUM_SECONDS_IN_MINUTE * NUM_MILLISECONDS_IN_SECOND)
-            lngSeconds = lngElapsedMilliSeconds \ (NUM_MILLISECONDS_IN_SECOND)
-            lngElapsedMilliSeconds -= lngSeconds * NUM_MILLISECONDS_IN_SECOND
+            lngHours = lngElapsedMilliSeconds \ (MINT_NUM_MINUTES_IN_HOUR * MINT_NUM_SECONDS_IN_MINUTE * MINT_NUM_MILLISECONDS_IN_SECOND)
+            lngElapsedMilliSeconds -= lngHours * (MINT_NUM_MINUTES_IN_HOUR * MINT_NUM_SECONDS_IN_MINUTE * MINT_NUM_MILLISECONDS_IN_SECOND)
+            lngMinutes = lngElapsedMilliSeconds \ (MINT_NUM_SECONDS_IN_MINUTE * MINT_NUM_MILLISECONDS_IN_SECOND)
+            lngElapsedMilliSeconds -= lngMinutes * (MINT_NUM_SECONDS_IN_MINUTE * MINT_NUM_MILLISECONDS_IN_SECOND)
+            lngSeconds = lngElapsedMilliSeconds \ (MINT_NUM_MILLISECONDS_IN_SECOND)
+            lngElapsedMilliSeconds -= lngSeconds * MINT_NUM_MILLISECONDS_IN_SECOND
 
             Return lngHours & " hrs, " & MakeXDigits(lngMinutes, 2) & " min, " & MakeXDigits(lngSeconds, 2) & "." & MakeXDigits(lngElapsedMilliSeconds, 4) & " sec"
         End Function

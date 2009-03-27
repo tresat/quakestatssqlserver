@@ -201,7 +201,7 @@ Namespace LogParsing
             If lngLastServerUppageID = 0 Then Throw New Exception("Error updating server uppage: " & mobjServerUppageCurr.ServerUppageID & ".  Last line no: " & mlngCurrentLineNo)
 
             mobjTimer.StopTimer()
-            Print("Finished in " & mobjTimer.GetResultAsTimeString & ".")
+            Print("Finished in " & mobjTimer.GetResultAsTimeString & " (actual " & mobjTimer.GetElapsedAsTimeString & ").")
 
             'Print action count
             For Each strKey As String In mdctActions.Keys
@@ -1054,6 +1054,7 @@ Namespace LogParsing
                 'partially copied client
                 objClient2 = New clsClient(mcxnStatsDB, objClient.ConnectTime, lngClientNo)
                 objClient2.BeginTime = mobjCurrentTimestamp
+                objClient2.FirstAppearLineNo = mlngCurrentLineNo
                 objClient2.UserinfoLineNo = mlngCurrentLineNo
                 objClient2.SetUserInfo(strInfo)
 
@@ -1110,6 +1111,7 @@ Namespace LogParsing
                 'add the player to the game
                 objClient = New clsClient(mcxnStatsDB, mobjCurrentTimestamp, lngClientNo)
                 objClient.ConnectLineNo = mlngCurrentLineNo
+                objClient.FirstAppearLineNo = mlngCurrentLineNo
                 mobjGameCurr.AddCurrentClient(objClient)
             Else
                 'Set connect lineno on clinet
@@ -1304,8 +1306,11 @@ Namespace LogParsing
                 End If
             Next
 
+            Application.DoEvents()
+            frmMain.rtbConsole.ScrollToCaret()
+
             mobjTimer.StopTimer()
-            Print("Finished spooling in " & mobjTimer.GetResultAsTimeString & ".")
+            Print("Finished spooling in " & mobjTimer.GetResultAsTimeString & " (actual " & mobjTimer.GetElapsedAsTimeString & ").")
         End Sub
 #End Region
     End Class
