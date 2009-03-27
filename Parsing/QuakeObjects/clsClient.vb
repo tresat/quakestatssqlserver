@@ -24,6 +24,8 @@ Namespace LogParsing.QuakeObjects
         Private mlngEndLineNo As Long
         Private mlngDisconnectLineNo As Long
 
+        Private mlngFirstAppearLineNo As Long
+
         Private mlngClientLogID As Long
 
         Private mblnHasInfo As Boolean
@@ -51,6 +53,15 @@ Namespace LogParsing.QuakeObjects
             Set(ByVal value As SqlConnection)
                 mcxnStatsDB = value
                 VerifyDBConnected(mcxnStatsDB)
+            End Set
+        End Property
+
+        Public Property FirstAppearLineNo() As Long
+            Get
+                Return mlngFirstAppearLineNo
+            End Get
+            Set(ByVal value As Long)
+                mlngFirstAppearLineNo = value
             End Set
         End Property
 
@@ -204,6 +215,7 @@ Namespace LogParsing.QuakeObjects
             mobjDisconnectTime = Nothing
             mobjEndTime = Nothing
 
+            mlngFirstAppearLineNo = 0
             mlngConnectLineNo = 0
             mlngBeginLineNo = 0
             mlngDisconnectLineNo = 0
@@ -283,20 +295,20 @@ Namespace LogParsing.QuakeObjects
             Dim lngItemPickupID As Long
 
             'First create a client record
-            strSQL = "INSERT INTO CalculatedData.Client (fkGameID, ClientLogID, ServerConnectTime "
+            strSQL = "INSERT INTO CalculatedData.Client (fkGameID, ClientLogID, ServerConnectTime, ClientFirstAppearLineNumber "
             If mlngConnectLineNo <> 0 Then strSQL &= ", fkClientConnectLineNumber "
             If mlngBeginLineNo <> 0 Then strSQL &= ", fkClientBeginLineNumber "
             If mobjBeginTime IsNot Nothing Then strSQL &= ", ServerBeginTime "
             If mobjDisconnectTime IsNot Nothing Then strSQL &= ", ServerDisconnectTime, fkClientDisconnectLineNumber "
-            If mblnHasInfo Then strSQL &= ", ClientName, TeamLogID "
+            If mblnHasInfo Then strSQL &= ", ClientName, TeamLogID, fkClientUserinfoLineNumber "
             If mblnScoreSet Then strSQL &= ", Score, Ping, IsFinalClient, fkScoreLineNumber "
             If mobjEndTime IsNot Nothing Then strSQL &= ", ServerEndTime, ClientEndLineNumber "
-            strSQL &= ") VALUES (@GameID, @ClientLogID, @ServerConnectTime "
+            strSQL &= ") VALUES (@GameID, @ClientLogID, @ServerConnectTime, @FirstAppearLineNo "
             If mlngConnectLineNo <> 0 Then strSQL &= ", @ConnectLineNo "
             If mlngBeginLineNo <> 0 Then strSQL &= ", @BeginLineNo "
             If mobjBeginTime IsNot Nothing Then strSQL &= ", @ServerBeginTime "
             If mobjDisconnectTime IsNot Nothing Then strSQL &= ", @ServerDisconnectTime, @DisconnectLineNo "
-            If mblnHasInfo Then strSQL &= ", @ClientName, @TeamLogID "
+            If mblnHasInfo Then strSQL &= ", @ClientName, @TeamLogID, @UserinfoLineNo "
             If mblnScoreSet Then strSQL &= ", @Score, @Ping, @IsFinalClient, @ScoreLineNo "
             If mobjEndTime IsNot Nothing Then strSQL &= ", @ServerEndTime, @EndLineNo "
             strSQL &= ") "
@@ -305,6 +317,7 @@ Namespace LogParsing.QuakeObjects
             cmdWrite.Parameters.AddWithValue("GameID", plngGameID)
             cmdWrite.Parameters.AddWithValue("ClientLogID", mlngClientLogID)
             cmdWrite.Parameters.AddWithValue("ServerConnectTime", mobjConnectTime.Seconds)
+            cmdWrite.Parameters.AddWithValue("FirstAppearLineNo", mlngFirstAppearLineNo)
             If mlngConnectLineNo <> 0 Then cmdWrite.Parameters.AddWithValue("ConnectLineNo", mlngConnectLineNo)
             If mlngBeginLineNo <> 0 Then cmdWrite.Parameters.AddWithValue("BeginLineNo", mlngBeginLineNo)
             If mobjBeginTime IsNot Nothing Then cmdWrite.Parameters.AddWithValue("ServerBeginTime", mobjBeginTime.Seconds)
@@ -315,6 +328,7 @@ Namespace LogParsing.QuakeObjects
             If mblnHasInfo Then
                 cmdWrite.Parameters.AddWithValue("ClientName", IIf(mstrClientName Is Nothing, DBNull.Value, mstrClientName))
                 cmdWrite.Parameters.AddWithValue("TeamLogID", mlngTeamLogID)
+                cmdWrite.Parameters.AddWithValue("UserinfoLineNo", mlngUserinfoLineNo)
             End If
             If mblnScoreSet Then
                 cmdWrite.Parameters.AddWithValue("Score", mlngScore)
