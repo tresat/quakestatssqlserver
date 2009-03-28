@@ -31,6 +31,12 @@ Partial Class frmMain
         Me.txtGameEventTotal = New System.Windows.Forms.TextBox
         Me.txtGameEventCurrent = New System.Windows.Forms.TextBox
         Me.lblGameEventCurrent = New System.Windows.Forms.Label
+        Me.txtWorkingSetSize = New System.Windows.Forms.TextBox
+        Me.lblWorkingSetSize = New System.Windows.Forms.Label
+        Me.txtSuccesses = New System.Windows.Forms.TextBox
+        Me.txtFailures = New System.Windows.Forms.TextBox
+        Me.lblSuccesses = New System.Windows.Forms.Label
+        Me.lblFailures = New System.Windows.Forms.Label
         Me.SuspendLayout()
         '
         'cmdParse
@@ -122,12 +128,72 @@ Partial Class frmMain
         Me.lblGameEventCurrent.TabIndex = 7
         Me.lblGameEventCurrent.Text = "Current Game Event #"
         '
+        'txtWorkingSetSize
+        '
+        Me.txtWorkingSetSize.Anchor = CType((System.Windows.Forms.AnchorStyles.Bottom Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.txtWorkingSetSize.Location = New System.Drawing.Point(667, 332)
+        Me.txtWorkingSetSize.Name = "txtWorkingSetSize"
+        Me.txtWorkingSetSize.Size = New System.Drawing.Size(108, 20)
+        Me.txtWorkingSetSize.TabIndex = 10
+        '
+        'lblWorkingSetSize
+        '
+        Me.lblWorkingSetSize.Anchor = CType((System.Windows.Forms.AnchorStyles.Bottom Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.lblWorkingSetSize.AutoSize = True
+        Me.lblWorkingSetSize.Location = New System.Drawing.Point(664, 316)
+        Me.lblWorkingSetSize.Name = "lblWorkingSetSize"
+        Me.lblWorkingSetSize.Size = New System.Drawing.Size(89, 13)
+        Me.lblWorkingSetSize.TabIndex = 9
+        Me.lblWorkingSetSize.Text = "Working Set Size"
+        '
+        'txtSuccesses
+        '
+        Me.txtSuccesses.Anchor = CType((System.Windows.Forms.AnchorStyles.Top Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.txtSuccesses.Location = New System.Drawing.Point(668, 209)
+        Me.txtSuccesses.Name = "txtSuccesses"
+        Me.txtSuccesses.Size = New System.Drawing.Size(43, 20)
+        Me.txtSuccesses.TabIndex = 11
+        '
+        'txtFailures
+        '
+        Me.txtFailures.Anchor = CType((System.Windows.Forms.AnchorStyles.Top Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.txtFailures.Location = New System.Drawing.Point(733, 209)
+        Me.txtFailures.Name = "txtFailures"
+        Me.txtFailures.Size = New System.Drawing.Size(39, 20)
+        Me.txtFailures.TabIndex = 12
+        '
+        'lblSuccesses
+        '
+        Me.lblSuccesses.Anchor = CType((System.Windows.Forms.AnchorStyles.Top Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.lblSuccesses.AutoSize = True
+        Me.lblSuccesses.Location = New System.Drawing.Point(666, 190)
+        Me.lblSuccesses.Name = "lblSuccesses"
+        Me.lblSuccesses.Size = New System.Drawing.Size(59, 13)
+        Me.lblSuccesses.TabIndex = 13
+        Me.lblSuccesses.Text = "Successes"
+        '
+        'lblFailures
+        '
+        Me.lblFailures.Anchor = CType((System.Windows.Forms.AnchorStyles.Top Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.lblFailures.AutoSize = True
+        Me.lblFailures.Location = New System.Drawing.Point(730, 190)
+        Me.lblFailures.Name = "lblFailures"
+        Me.lblFailures.Size = New System.Drawing.Size(43, 13)
+        Me.lblFailures.TabIndex = 14
+        Me.lblFailures.Text = "Failures"
+        '
         'frmMain
         '
         Me.AcceptButton = Me.cmdParse
         Me.AutoScaleDimensions = New System.Drawing.SizeF(6.0!, 13.0!)
         Me.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font
         Me.ClientSize = New System.Drawing.Size(786, 442)
+        Me.Controls.Add(Me.lblFailures)
+        Me.Controls.Add(Me.lblSuccesses)
+        Me.Controls.Add(Me.txtFailures)
+        Me.Controls.Add(Me.txtSuccesses)
+        Me.Controls.Add(Me.txtWorkingSetSize)
+        Me.Controls.Add(Me.lblWorkingSetSize)
         Me.Controls.Add(Me.txtGameEventCurrent)
         Me.Controls.Add(Me.lblGameEventCurrent)
         Me.Controls.Add(Me.txtGameEventTotal)
@@ -152,5 +218,11 @@ Partial Class frmMain
     Friend WithEvents txtGameEventTotal As System.Windows.Forms.TextBox
     Friend WithEvents txtGameEventCurrent As System.Windows.Forms.TextBox
     Friend WithEvents lblGameEventCurrent As System.Windows.Forms.Label
+    Friend WithEvents txtWorkingSetSize As System.Windows.Forms.TextBox
+    Friend WithEvents lblWorkingSetSize As System.Windows.Forms.Label
+    Friend WithEvents txtSuccesses As System.Windows.Forms.TextBox
+    Friend WithEvents txtFailures As System.Windows.Forms.TextBox
+    Friend WithEvents lblSuccesses As System.Windows.Forms.Label
+    Friend WithEvents lblFailures As System.Windows.Forms.Label
 
 End Class

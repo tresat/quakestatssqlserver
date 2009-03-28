@@ -45,10 +45,25 @@ Public Class frmMain
         mobjAdjacencyCalculator.CalculateAllAdjacencies()
     End Sub
 
-    Private Sub mobjFlagCalculator_GameEventParsed(ByVal pintCurrentEvent As Integer, ByVal pintTotalEvents As Integer) Handles mobjFlagCalculator.GameEventParsed
+    Private Sub mobjFlagCalculator_GameEventParsed(ByVal pintCurrentEvent As Integer, ByVal pintTotalEvents As Integer, ByVal pintWorkingSetSize As Integer) Handles mobjFlagCalculator.GameEventParsed
         txtGameEventCurrent.Text = CStr(pintCurrentEvent)
         txtGameEventTotal.Text = CStr(pintTotalEvents)
+        txtWorkingSetSize.Text = CStr(pintWorkingSetSize)
         Application.DoEvents()
+    End Sub
+
+    Private Sub mobjFlagCalculator_GameParsed(ByVal pblnSuccess As Boolean) Handles mobjFlagCalculator.GameParsed
+        Static sintSuccesses As Integer = 0
+        Static sintFailures As Integer = 0
+
+        If pblnSuccess Then
+            sintSuccesses += 1
+        Else
+            sintFailures += 1
+        End If
+
+        txtSuccesses.Text = CStr(sintSuccesses)
+        txtFailures.Text = CStr(sintFailures)
     End Sub
 #End Region
 End Class

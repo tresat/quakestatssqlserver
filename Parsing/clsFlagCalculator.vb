@@ -48,10 +48,21 @@ Public Class clsFlagCalculator
         Private mlngRedFlagResetTime As Long
         Private mlngBlueFlagResetTime As Long
 
+        Private mblnPrinted As Boolean
+
         Private Shared mlngCurrentNodeID As Long = 1
 #End Region
 
 #Region "Properties"
+        Public Property Printed() As Boolean
+            Get
+                Return mblnPrinted
+            End Get
+            Set(ByVal value As Boolean)
+                mblnPrinted = value
+            End Set
+        End Property
+
         Public ReadOnly Property NodeID() As Long
             Get
                 Return mlngNodeID
@@ -136,6 +147,8 @@ Public Class clsFlagCalculator
             mlngBlueFlagHolderClientID = plngBlueFlagHolderClientID
             mlngRedFlagResetTime = plngRedFlagResetTime
             mlngBlueFlagResetTime = plngBlueFlagResetTime
+
+            mblnPrinted = False
         End Sub
 #End Region
 
@@ -170,7 +183,7 @@ Public Class clsFlagCalculator
 #Region "Status Transition"
     Private Class clsStatusTransition
 #Region "Member Variables"
-        Private mobjPrior As clsStatusSnapshot
+        Private mobjPriors As List(Of clsStatusSnapshot)
         Private mobjSubsequent As clsStatusSnapshot
 
         Private mlngEventID As Long
@@ -196,9 +209,9 @@ Public Class clsFlagCalculator
 #End Region
 
 #Region "Properties"
-        Public ReadOnly Property Prior() As clsStatusSnapshot
+        Public ReadOnly Property Priors() As List(Of clsStatusSnapshot)
             Get
-                Return mobjPrior
+                Return mobjPriors
             End Get
         End Property
 
@@ -379,7 +392,9 @@ Public Class clsFlagCalculator
                         ByVal pstrEventType As String, ByVal plngClientID1 As Long, ByVal plngClientID2 As Long, _
                         ByVal penuClientTeam1 As enuTeamType, ByVal penuClientTeam2 As enuTeamType, _
                         ByVal pstrItemName As String, ByVal pstrWeaponName As String)
-            mobjPrior = pobjPrior
+            mobjPriors = New List(Of clsStatusSnapshot)
+            mobjPriors.Add(pobjPrior)
+
             mobjSubsequent = pobjSubsequent
 
             menuSignificance = penuSignificance
@@ -397,6 +412,16 @@ Public Class clsFlagCalculator
             mstrWeaponName = pstrWeaponName
         End Sub
 #End Region
+
+#Region "Public Functionality"
+        ''' <summary>
+        ''' Adds the prior node to the list of prior nodes.
+        ''' </summary>
+        ''' <param name="pobjPrior">The prior status object..</param>
+        Public Sub AddPrior(ByRef pobjPrior As clsStatusSnapshot)
+            mobjPriors.Add(pobjPrior)
+        End Sub
+#End Region
     End Class
 #End Region
 #End Region
@@ -409,6 +434,9 @@ Public Class clsFlagCalculator
     Private mobjTimer As Utilities.clsHighPerformanceTimer
 
     Private mstrGameTreeOutputPath As String
+
+    Dim mintGoalRedScore As Integer
+    Dim mintGoalBlueScore As Integer
 #End Region
 
 #Region "Properties"
@@ -424,7 +452,8 @@ Public Class clsFlagCalculator
 #End Region
 
 #Region "Events"
-    Public Event GameEventParsed(ByVal pintCurrentEvent As Integer, ByVal pintTotalEvents As Integer)
+    Public Event GameEventParsed(ByVal pintCurrentEvent As Integer, ByVal pintTotalEvents As Integer, ByVal pintWorkingSetSize As Integer)
+    Public Event GameParsed(ByVal pblnSuccess As Boolean)
 #End Region
 
 #Region "Constructors"
@@ -445,14 +474,16 @@ Public Class clsFlagCalculator
                 mobjTimer.StartTimer()
                 DoCalculateGame(plngGameID)
                 Print("succeeded ", False)
-                PrintTreeToFile(plngGameID)
+                RaiseEvent GameParsed(True)
                 MarkFlagCalculationsComplete(plngGameID, True)
             Catch ex As Exception
                 Print("**************************************FAILED**************************************")
                 Print("**************************************FAILED**************************************")
                 Print("**************************************FAILED**************************************")
+                RaiseEvent GameParsed(False)
                 MarkFlagCalculationsComplete(plngGameID, False)
             End Try
+            'PrintTreeToFile(plngGameID)
             mobjTimer.StopTimer()
             Print("in: " & mobjTimer.GetResultAsTimeString & " (actual " & mobjTimer.GetElapsedAsTimeString & ").")
         Else
@@ -465,11 +496,12 @@ Public Class clsFlagCalculator
         Dim lngMaxGameID As Long = GetMaxGameID()
 
         Print("Begin calculating flag captures for " & lngMaxGameID - lngMinGameID & " maximum games, from: " & lngMinGameID & " to: " & lngMaxGameID & " ...")
-        For lngCurrentGameID As Long = lngMinGameID To lngMaxGameID
+        For lngCurrentGameID As Long = lngMaxGameID To lngMinGameID Step -1
             If Not IsFlagCalculationsComplete(lngCurrentGameID) Then
                 If IsCompleteInLog(lngCurrentGameID) Then
                     CalculateGame(lngCurrentGameID)
                     Print(lngMaxGameID - lngCurrentGameID & " maximum games remaining...")
+                    'Return
                 End If
             End If
         Next
@@ -486,8 +518,8 @@ Public Class clsFlagCalculator
         PrintFirstBranchRecDown(mobjRoot, 0)
     End Sub
 
-    Public Sub PrintTreeToFile(Optional ByVal plngGameID As Long = 0)
-        PrintGameStatusTree(GetGameTreeFileWriter(plngGameID))
+    Public Sub PrintTreeToFile(Optional ByVal plngGameID As Long = 0, Optional ByVal plngIdx As Long = 0)
+        PrintGameStatusTree(GetGameTreeFileWriter(plngGameID, plngIdx))
     End Sub
 
     ''' <summary>
@@ -496,6 +528,8 @@ Public Class clsFlagCalculator
     ''' <param name="pobjWriter">A writer to an open stream, if writing to a file. </param>
     Public Sub PrintGameStatusTree(Optional ByVal pobjWriter As StreamWriter = Nothing)
         Dim strResult As String = String.Empty
+
+        ResetPrinted(mobjRoot)
 
         strResult &= "******************************STATUS******************************" & vbCrLf
 
@@ -514,6 +548,13 @@ Public Class clsFlagCalculator
         PrintGameStatusRecDown(mobjRoot, 0, pobjWriter)
 
         If pobjWriter IsNot Nothing Then pobjWriter.Close()
+    End Sub
+
+    Private Sub ResetPrinted(ByVal pobjNode As clsStatusSnapshot)
+        pobjNode.Printed = False
+        For Each objChild As clsStatusSnapshot In pobjNode.Children
+            ResetPrinted(objChild)
+        Next
     End Sub
 
     ''' <summary>
@@ -551,8 +592,8 @@ Public Class clsFlagCalculator
         Dim objResultStatus As clsStatusSnapshot
         Dim intStateIdx As Integer
 
-        Dim intPrintIdx As Integer = 0
-        'Dim blnPrint As Boolean
+        Dim intPrintIdx As Integer = 1
+        Dim blnPrint As Boolean
 
         'Create the root node (both flags in base, no timers set, no parent)
         mobjRoot = New clsStatusSnapshot(True, True, 0, 0, 0, 0)
@@ -565,9 +606,9 @@ Public Class clsFlagCalculator
 
         'Walk the game events and do the initial flag calculations
         For intIdx As Integer = 0 To dtGameEvents.Rows.Count - 1
-            RaiseEvent GameEventParsed(intIdx, dtGameEvents.Rows.Count)
+            RaiseEvent GameEventParsed(intIdx, dtGameEvents.Rows.Count, mlstWorkingSet.Count)
 
-            'blnPrint = True
+            blnPrint = True
             'Print("On event: " & intIdx & " of " & dtGameEvents.Rows.Count - 1)
 
             'If lngCurrentLineNo = 37992 Then
@@ -896,7 +937,7 @@ Public Class clsFlagCalculator
                                 Else
                                     'Event doesn't affect flag, so move to next node in current working set
                                     intStateIdx += 1
-                                    'blnPrint = False
+                                    blnPrint = False
                                 End If
                             Case enuTeamType.Blue
                                 'Blue player dying
@@ -930,7 +971,7 @@ Public Class clsFlagCalculator
                                 Else
                                     'Event doesn't affect flag, so move to next node in current working set
                                     intStateIdx += 1
-                                    'blnPrint = False
+                                    blnPrint = False
                                 End If
                         End Select
                     Case "END"
@@ -966,7 +1007,7 @@ Public Class clsFlagCalculator
                                 Else
                                     'Event doesn't affect flag, so move to next node in current working set
                                     intStateIdx += 1
-                                    'blnPrint = False
+                                    blnPrint = False
                                 End If
                             Case enuTeamType.Blue
                                 If lngRedFlagHolderClientID = lngClientID1 Then
@@ -999,13 +1040,13 @@ Public Class clsFlagCalculator
                                 Else
                                     'Event doesn't affect flag, so move to next node in current working set
                                     intStateIdx += 1
-                                    'blnPrint = False
+                                    blnPrint = False
                                 End If
                             Case Else
                                 'Spectator leaving
                                 'Event doesn't affect flag, so move to next node in current working set
                                 intStateIdx += 1
-                                'blnPrint = False
+                                blnPrint = False
                         End Select
                     Case "NUMBERCHANGE"
                         Select Case enuClientTeam1
@@ -1026,7 +1067,7 @@ Public Class clsFlagCalculator
                                 Else
                                     'Event doesn't affect flag, so move to next node in current working set
                                     intStateIdx += 1
-                                    'blnPrint = False
+                                    blnPrint = False
                                 End If
                             Case enuTeamType.Blue
                                 If lngRedFlagHolderClientID = lngClientID1 Then
@@ -1045,53 +1086,32 @@ Public Class clsFlagCalculator
                                 Else
                                     'Event doesn't affect flag, so move to next node in current working set
                                     intStateIdx += 1
-                                    'blnPrint = False
+                                    blnPrint = False
                                 End If
                             Case Else
                                 'Spectator number changing
                                 'Event doesn't affect flag, so move to next node in current working set
                                 intStateIdx += 1
-                                'blnPrint = False
+                                blnPrint = False
                         End Select
                     Case Else
                         Throw New Exception("Unknown event type: " & strEventType)
                 End Select
             Loop
 
-            'If blnPrint Then
-            'PruneDuplicatesFromWorkingSet()
-            'PrintGameStatusTree()
-            'PrintFirstBranch()
-            'PrintTreeToFile(intPrintIdx)
-            'intPrintIdx += 1
-            'End If
+            MergeDuplicateLeaves()
 
-            'blnPrint = False
+            If blnPrint Then
+                'PrintTreeToFile(lngGameID, intPrintIdx)
+                intPrintIdx += 1
+            End If
+
+            blnPrint = False
         Next
-        'Print("BEFORE:")
-        'PrintGameStatusTree()
 
-        'PrintTreeToFile()
-
-        PruneBranchesNotTallying(plngGameID)
-
-        'Print game tree status
-        'Using fileOutput As New FileStream(ConfigurationManager.AppSettings("OutputFilesDir") & "GameTree_" & Now.ToString("yyyyMMddHHmmss") & ".log", FileMode.CreateNew)
-        'Using writer As New StreamWriter(fileOutput)
-        'PrintGameStatusTree(writer)
-        'End Using
-        'End Using
-
-        'Print("AFTER:")
-        'PrintGameStatusTree()
-
-        If mobjRoot Is Nothing Then
-            Throw New Exception("ROOT IS GONE!!!")
+        If FindAllTallyingPaths(plngGameID).count = 0 Then
+            Throw New Exception("Did not find path which tallied to final score in current game graph!")
         End If
-
-        'If mobjRoot.Children.Count = 0 Then
-        'Throw New Exception("Tree got destroyed!")
-        'End If
     End Sub
 #End Region
 
@@ -1167,273 +1187,335 @@ Public Class clsFlagCalculator
         Next
     End Sub
 
-    Private Sub PrintGameStatusRecUp(ByVal pobjNode As clsStatusSnapshot, ByVal pintLevel As Integer, _
-                                   Optional ByVal pobjWriter As StreamWriter = Nothing)
-        Dim strResult As String = PrintCurrentNode(pobjNode, pintLevel)
-        Dim lstChildStatusNodes As List(Of clsStatusSnapshot) = pobjNode.Children
+    'Private Sub PrintGameStatusRecUp(ByVal pobjNode As clsStatusSnapshot, ByVal pintLevel As Integer, _
+    '                               Optional ByVal pobjWriter As StreamWriter = Nothing)
+    '    Dim strResult As String = PrintCurrentNode(pobjNode, pintLevel)
+    '    Dim lstChildStatusNodes As List(Of clsStatusSnapshot) = pobjNode.Children
 
-        If pobjWriter IsNot Nothing Then
-            pobjWriter.Write(strResult)
-        Else
-            Print(strResult)
-        End If
+    '    If pobjWriter IsNot Nothing Then
+    '        pobjWriter.Write(strResult)
+    '    Else
+    '        Print(strResult)
+    '    End If
 
-        If pobjNode.Parent IsNot Nothing Then
-            PrintGameStatusRecUp(pobjNode.Parent.Prior, pintLevel + 1)
-        End If
-    End Sub
+    '    If pobjNode.Parent IsNot Nothing Then
+    '        PrintGameStatusRecUp(pobjNode.Parent.Prior, pintLevel + 1)
+    '    End If
+    'End Sub
 
     Private Function PrintCurrentNode(ByVal pobjNode As clsStatusSnapshot, ByVal pintLevel As Integer) As String
         Dim strResult As String = String.Empty
 
-        strResult &= TabOut(pintLevel)
-        If pobjNode.Parent IsNot Nothing Then
-            strResult &= pobjNode.Parent.LineNo & ": "
-            Select Case pobjNode.Parent.Significance
-                Case enuSignificanceType.Capture
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
-                    strResult &= "CAPTURES "
-                Case enuSignificanceType.CarrierClientEnd
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
-                    strResult &= "CLIENT CARRIER OF "
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "BLUE FLAG "
-                        Case enuTeamType.Blue
-                            strResult &= "RED FLAG "
-                    End Select
-                    strResult &= "ENDS "
-                Case enuSignificanceType.CarrierKillWithDrop
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
-                    strResult &= "KILLS "
-                    Select Case pobjNode.Parent.Client2Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
-                    strResult &= "CARRIER OF "
-                    Select Case pobjNode.Parent.Client2Team
-                        Case enuTeamType.Red
-                            strResult &= "BLUE FLAG "
-                        Case enuTeamType.Blue
-                            strResult &= "RED FLAG "
-                    End Select
-                    strResult &= "FLAG DROPS "
-                Case enuSignificanceType.CarrierKillWithReset
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
-                    strResult &= "KILLS "
-                    Select Case pobjNode.Parent.Client2Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
-                    strResult &= "CARRIER OF "
-                    Select Case pobjNode.Parent.Client2Team
-                        Case enuTeamType.Red
-                            strResult &= "BLUE FLAG "
-                        Case enuTeamType.Blue
-                            strResult &= "RED FLAG "
-                    End Select
-                    strResult &= "FLAG RESETS "
-                Case enuSignificanceType.Pickup
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
-                    strResult &= "PICKS UP "
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "BLUE FLAG "
-                        Case enuTeamType.Blue
-                            strResult &= "RED FLAG "
-                    End Select
-                Case enuSignificanceType.Recovery
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
-                    strResult &= "RECOVERS "
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "RED FLAG "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE FLAG "
-                    End Select
-                Case enuSignificanceType.ResetDueToRedTimerExpiration
-                    strResult &= "RED TIMER EXPIRES RED FLAG RESET "
-                Case enuSignificanceType.ResetDueToBlueTimerExpiration
-                    strResult &= "BLUE TIMER EXPIRES BLUE FLAG RESET "
-                Case enuSignificanceType.Steal
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
-                    strResult &= "STEALS "
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "BLUE FLAG "
-                        Case enuTeamType.Blue
-                            strResult &= "RED FLAG "
-                    End Select
-                Case enuSignificanceType.CarrierClientNumberChange
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
-                    strResult &= "ID CHANGES TO " & pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
-                Case enuSignificanceType.CarrierClientTeamChange
-                    Select Case pobjNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
-                    strResult &= "TEAM CHANGES TO "
-                    Select Case pobjNode.Parent.Client2Team
-                        Case enuTeamType.Red
-                            strResult &= "RED "
-                        Case enuTeamType.Blue
-                            strResult &= "BLUE "
-                    End Select
-                    strResult &= pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
-                Case Else
-                    Throw New Exception("Unknown event cause!")
-            End Select
+        If Not pobjNode.Printed Then
+            strResult &= TabOut(pintLevel)
+            If pobjNode.Parent IsNot Nothing Then
+                strResult &= pobjNode.Parent.LineNo & ": "
+                Select Case pobjNode.Parent.Significance
+                    Case enuSignificanceType.Capture
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                        strResult &= "CAPTURES "
+                    Case enuSignificanceType.CarrierClientEnd
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                        strResult &= "CLIENT CARRIER OF "
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "BLUE FLAG "
+                            Case enuTeamType.Blue
+                                strResult &= "RED FLAG "
+                        End Select
+                        strResult &= "ENDS "
+                    Case enuSignificanceType.CarrierKillWithDrop
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                        strResult &= "KILLS "
+                        Select Case pobjNode.Parent.Client2Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
+                        strResult &= "CARRIER OF "
+                        Select Case pobjNode.Parent.Client2Team
+                            Case enuTeamType.Red
+                                strResult &= "BLUE FLAG "
+                            Case enuTeamType.Blue
+                                strResult &= "RED FLAG "
+                        End Select
+                        strResult &= "FLAG DROPS "
+                    Case enuSignificanceType.CarrierKillWithReset
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                        strResult &= "KILLS "
+                        Select Case pobjNode.Parent.Client2Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
+                        strResult &= "CARRIER OF "
+                        Select Case pobjNode.Parent.Client2Team
+                            Case enuTeamType.Red
+                                strResult &= "BLUE FLAG "
+                            Case enuTeamType.Blue
+                                strResult &= "RED FLAG "
+                        End Select
+                        strResult &= "FLAG RESETS "
+                    Case enuSignificanceType.Pickup
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                        strResult &= "PICKS UP "
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "BLUE FLAG "
+                            Case enuTeamType.Blue
+                                strResult &= "RED FLAG "
+                        End Select
+                    Case enuSignificanceType.Recovery
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                        strResult &= "RECOVERS "
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "RED FLAG "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE FLAG "
+                        End Select
+                    Case enuSignificanceType.ResetDueToRedTimerExpiration
+                        strResult &= "RED TIMER EXPIRES RED FLAG RESET "
+                    Case enuSignificanceType.ResetDueToBlueTimerExpiration
+                        strResult &= "BLUE TIMER EXPIRES BLUE FLAG RESET "
+                    Case enuSignificanceType.Steal
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                        strResult &= "STEALS "
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "BLUE FLAG "
+                            Case enuTeamType.Blue
+                                strResult &= "RED FLAG "
+                        End Select
+                    Case enuSignificanceType.CarrierClientNumberChange
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                        strResult &= "ID CHANGES TO " & pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
+                    Case enuSignificanceType.CarrierClientTeamChange
+                        Select Case pobjNode.Parent.Client1Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client1ID & " (" & GetClientLogID(pobjNode.Parent.Client1ID) & ") "
+                        strResult &= "TEAM CHANGES TO "
+                        Select Case pobjNode.Parent.Client2Team
+                            Case enuTeamType.Red
+                                strResult &= "RED "
+                            Case enuTeamType.Blue
+                                strResult &= "BLUE "
+                        End Select
+                        strResult &= pobjNode.Parent.Client2ID & " (" & GetClientLogID(pobjNode.Parent.Client2ID) & ") "
+                    Case Else
+                        Throw New Exception("Unknown event cause!")
+                End Select
+
+                pobjNode.Printed = True
+            Else
+                strResult &= "START OF GAME "
+            End If
+            strResult &= " ->"
+            strResult &= vbCrLf
+
+            strResult &= TabOut(pintLevel) & "NODE: " & pobjNode.NodeID & " Rbase: " & CStr(IIf(pobjNode.RedFlagInBase, "Y", "N")) & " Rhold: " & pobjNode.RedFlagHolderClientID & " (" & GetClientLogID(pobjNode.RedFlagHolderClientID) & ") " & _
+                    "Bbase: " & CStr(IIf(pobjNode.BlueFlagInBase, "Y", "N")) & " Bhold: " & pobjNode.BlueFlagHolderClientID & " (" & GetClientLogID(pobjNode.BlueFlagHolderClientID) & ") Rtime: " & pobjNode.RedFlagResetTime & " Btime: " & pobjNode.BlueFlagResetTime & vbCrLf
+
+            strResult &= TabOut(pintLevel) & "has " & pobjNode.Children.Count & " children: " & vbCrLf
         Else
-            strResult &= "START OF GAME "
+            strResult &= TabOut(pintLevel) & "NODE: " & pobjNode.NodeID & " (already printed)" & vbCrLf
+            strResult &= TabOut(pintLevel) & "has " & pobjNode.Children.Count & " children: " & vbCrLf
         End If
-        strResult &= " ->"
-        strResult &= vbCrLf
-
-        strResult &= TabOut(pintLevel) & "NODE: " & pobjNode.NodeID & " Rbase: " & CStr(IIf(pobjNode.RedFlagInBase, "Y", "N")) & " Rhold: " & pobjNode.RedFlagHolderClientID & " (" & GetClientLogID(pobjNode.RedFlagHolderClientID) & ") " & _
-                "Bbase: " & CStr(IIf(pobjNode.BlueFlagInBase, "Y", "N")) & " Bhold: " & pobjNode.BlueFlagHolderClientID & " (" & GetClientLogID(pobjNode.BlueFlagHolderClientID) & ") Rtime: " & pobjNode.RedFlagResetTime & " Btime: " & pobjNode.BlueFlagResetTime & vbCrLf
-
-        'Recurse on each child, increasing depth of recusion
-        strResult &= TabOut(pintLevel) & "has " & pobjNode.Children.Count & " children: " & vbCrLf
 
         Return strResult
     End Function
 
-    Private Sub PruneBranchesNotTallying(ByVal plngGameID As Long)
-        Dim objWSNode As clsStatusSnapshot
-        Dim objCurrentNode As clsStatusSnapshot
-        Dim intRedScoreDB As Integer = GetRedScore(plngGameID)
-        Dim intBlueScoreDB As Integer = GetBlueScore(plngGameID)
-        Dim intRedScoreCalc As Integer = 0
-        Dim intBlueScoreCalc As Integer = 0
+    ''' <summary>
+    ''' Finds all tallying paths from root to end in graph.
+    ''' </summary>
+    ''' <param name="plngGameID">The game ID.</param>
+    ''' <returns>A list of lists of long, representing path through the graph from root to leaf for which score tallys.</returns>
+    Private Function FindAllTallyingPaths(ByVal plngGameID As Long) As List(Of List(Of Long))
+        Dim lstFinalResult As New List(Of List(Of Long))
 
-        'Consider each leaf node
-        Dim intIdx As Integer = 0
-        Do While intIdx < mlstWorkingSet.Count - 1
-            objWSNode = mlstWorkingSet(intIdx)
-            objCurrentNode = objWSNode
+        mintGoalRedScore = GetRedScore(plngGameID)
+        mintGoalBlueScore = GetBlueScore(plngGameID)
 
-            'Ascend tree, counting captures
-            Do Until objCurrentNode.Parent Is Nothing
-                If objCurrentNode.Parent.Significance = enuSignificanceType.Capture Then
-                    Select Case objCurrentNode.Parent.Client1Team
-                        Case enuTeamType.Red
-                            intRedScoreCalc += 1
-                        Case enuTeamType.Blue
-                            intBlueScoreCalc += 1
-                        Case Else
-                            Throw New Exception("Red or blue must capture flag!")
-                    End Select
-                End If
+        For Each objWSNode As clsStatusSnapshot In mlstWorkingSet
+            For Each lstPath As List(Of Long) In FindAllTallyingPathsRec(objWSNode, 0, 0, New List(Of Long))
+                lstFinalResult.Add(lstPath)
+            Next
+        Next
 
-                objCurrentNode = objCurrentNode.Parent.Prior
-            Loop
+        Return lstFinalResult
+    End Function
 
-            'Check if captures tally
-            If intRedScoreCalc <> intRedScoreDB OrElse intBlueScoreCalc <> intBlueScoreDB Then
-                PruneImpossibleBranch(objWSNode)
-            Else
-                intIdx += 1
+    Private Function FindAllTallyingPathsRec(ByRef pobjCurrentNode As clsStatusSnapshot, _
+            ByVal pintCurrentRedScore As Integer, ByVal pintCurrentBlueScore As Integer, _
+            ByRef plstCurrentPath As List(Of Long)) As List(Of List(Of Long))
+        Dim lstResult As New List(Of List(Of Long))
+        Dim intRedScoreIncludingCurrentNode As Integer = pintCurrentRedScore
+        Dim intBlueScoreIncludingCurrentNode As Integer = pintCurrentBlueScore
+        Dim lstPathIncludingCurrentNode As List(Of Long) = plstCurrentPath
+
+        lstPathIncludingCurrentNode.Add(pobjCurrentNode.NodeID)
+
+        If pobjCurrentNode.Parent Is Nothing Then
+            'We've hit the root, make a determination and return
+            If pintCurrentBlueScore = mintGoalBlueScore AndAlso _
+                    pintCurrentRedScore = mintGoalRedScore Then
+                lstResult.Add(plstCurrentPath)
+                Return lstResult
             End If
-        Loop
-    End Sub
+        Else
+            'Add parent transition to score totals
+            If pobjCurrentNode.Parent.Significance = enuSignificanceType.Capture Then
+                If pobjCurrentNode.Parent.Client1Team = enuTeamType.Red Then
+                    intRedScoreIncludingCurrentNode += 1
+                Else
+                    intBlueScoreIncludingCurrentNode += 1
+                End If
+            End If
+
+            'Loop each parent node
+            For Each objParent As clsStatusSnapshot In pobjCurrentNode.Parent.Priors
+                For Each lstPath As List(Of Long) In FindAllTallyingPathsRec(objParent, intRedScoreIncludingCurrentNode, intBlueScoreIncludingCurrentNode, lstPathIncludingCurrentNode)
+                    lstResult.Add(lstPath)
+                Next
+            Next
+        End If
+
+        Return lstResult
+    End Function
+
+    'Private Sub PruneBranchesNotTallying(ByVal plngGameID As Long)
+    '    Dim objWSNode As clsStatusSnapshot
+    '    Dim objCurrentNode As clsStatusSnapshot
+    '    Dim intRedScoreDB As Integer = GetRedScore(plngGameID)
+    '    Dim intBlueScoreDB As Integer = GetBlueScore(plngGameID)
+    '    Dim intIdx As Integer = 0
+
+    '    'Consider each leaf node, can't use for each, because nodes
+    '    'might be evaporating from the current working set as we
+    '    'delete them during the recursive pruning process
+    '    Do While intIdx < mlstWorkingSet.Count - 1
+    '        PruneBranchesNotTallyingRec(mlstWorkingSet(intIdx), 0, 0)
+
+    '        intIdx += 1
+    '    Loop
+
+
+
+    '    'Consider each leaf node
+    '    Dim intIdx As Integer = 0
+    '    Do While intIdx < mlstWorkingSet.Count - 1
+    '        objWSNode = mlstWorkingSet(intIdx)
+    '        objCurrentNode = objWSNode
+
+    '        'Ascend tree, counting captures
+    '        Do Until objCurrentNode.Parent Is Nothing
+    '            If objCurrentNode.Parent.Significance = enuSignificanceType.Capture Then
+    '                Select Case objCurrentNode.Parent.Client1Team
+    '                    Case enuTeamType.Red
+    '                        intRedScoreCalc += 1
+    '                    Case enuTeamType.Blue
+    '                        intBlueScoreCalc += 1
+    '                    Case Else
+    '                        Throw New Exception("Red or blue must capture flag!")
+    '                End Select
+    '            End If
+
+    '            objCurrentNode = objCurrentNode.Parent.Prior
+    '        Loop
+
+    '        'Check if captures tally
+    '        If intRedScoreCalc <> intRedScoreDB OrElse intBlueScoreCalc <> intBlueScoreDB Then
+    '            PruneImpossibleBranch(objWSNode)
+    '        Else
+    '            intIdx += 1
+    '        End If
+    '    Loop
+    'End Sub
+
+    'Private Sub PruneBranchesNotTallyingRec(ByRef pobjBeginNode As clsStatusSnapshot, _
+    '        ByVal pintCurrentRedScoreCount As Integer, ByVal pintCurrentBlueScoreCount As Integer)
+
+
+    'End Sub
 
     ''' <summary>
-    ''' Prunes the impossible branch from the game tree
+    ''' Prunes the impossible branch from the game graph
     ''' </summary>
     ''' <param name="pobjBeginNode">A leaf node present on the branch to trim.</param>
     Private Sub PruneImpossibleBranch(ByRef pobjBeginNode As clsStatusSnapshot)
-        Dim objCurrentNode As clsStatusSnapshot = pobjBeginNode
-        Dim objClipNode As clsStatusSnapshot = Nothing
-
-        If pobjBeginNode.NodeID = 12 Then
-            Dim i As Int16 = 0
-        End If
-
-        'Print("Pruning from node with id: " & pobjBeginNode.NodeID)
-        'Print("BEFORE PRINTING TO FILE WITH -1:")
-        'PrintTreeToFile(-1)
-
-        'Walk the tree to find the clip node
-        Do Until objClipNode IsNot Nothing
-            'Step up the tree, if possible
-            If objCurrentNode.Parent IsNot Nothing Then
-                'Check if the parent node has multiple children, if so, it is the clip point
-                If objCurrentNode.Parent.Prior.Children.Count > 1 Then
-                    objClipNode = objCurrentNode.Parent.Prior
-                Else 'continue walking up
-                    objCurrentNode = objCurrentNode.Parent.Prior()
-                End If
-            Else
-                'No parent node, we've reached the start of the tree.  Should never happen
-                Throw New Exception("Can't prune root of tree!")
-            End If
-        Loop
-
-        'Do the clipping 
-        objClipNode.RemoveChild(objCurrentNode)
-
-        'And remove the current node from the working set
+        'Remove current node from the working set first
         mlstWorkingSet.Remove(pobjBeginNode)
 
-        'Print("AFTER:")
-        'PrintGameStatusTree()
+        PruneImpossibleBranchRec(pobjBeginNode)
+    End Sub
+
+    Private Sub PruneImpossibleBranchRec(ByRef pobjBeginNode As clsStatusSnapshot)
+        'Loop all parent nodes
+        For Each objParent As clsStatusSnapshot In pobjBeginNode.Parent.Priors
+            If objParent.Children.Count = 1 Then
+                'Continue recursing upwards
+                PruneImpossibleBranchRec(objParent)
+            Else
+                'Remove child from begin node
+                objParent.Children.Remove(pobjBeginNode)
+            End If
+        Next
     End Sub
 
     ''' <summary>
@@ -2311,11 +2393,84 @@ Public Class clsFlagCalculator
     ''' </summary>
     ''' <param name="plngGameID">The game ID.</param>
     ''' <returns>StreamWriter to the game file.</returns>
-    Private Function GetGameTreeFileWriter(ByVal plngGameID As Long) As StreamWriter
-        Dim strGameTreeFilePath As String = My.Computer.FileSystem.CombinePath(mstrGameTreeOutputPath, "game-" & plngGameID & ".txt")
+    Private Function GetGameTreeFileWriter(ByVal plngGameID As Long, Optional ByVal plngIdx As Long = 0) As StreamWriter
+        Dim strGamePrintDir As String = My.Computer.FileSystem.CombinePath(mstrGameTreeOutputPath, CStr(plngGameID) & "\")
+        If Not My.Computer.FileSystem.DirectoryExists(strGamePrintDir) Then
+            My.Computer.FileSystem.CreateDirectory(strGamePrintDir)
+        End If
+
+        Dim strGamePrintFileName As String = "game-" & plngGameID & "-idx-" & plngIdx & ".txt"
+        Dim strGameTreeFilePath As String = My.Computer.FileSystem.CombinePath(strGamePrintDir, strGamePrintFileName)
         Dim writer As New StreamWriter(New FileStream(strGameTreeFilePath, FileMode.Create))
 
         Return writer
+    End Function
+
+    ''' <summary>
+    ''' Merges the duplicate leaves present in the current working set.
+    ''' Meant to be run at the end of every event parse.  Should only
+    ''' run at the end of an event parse, assumes all nodes in the WS will
+    ''' have a parent.
+    ''' </summary>
+    Private Sub MergeDuplicateLeaves()
+        Dim lstUniqueLeaves As New List(Of clsStatusSnapshot)
+        Dim lstLeavesToRemoveFromWorkingSet As New List(Of clsStatusSnapshot)
+        Dim blnFoundUniqueMatch As Boolean
+        Dim objUniqueNode As clsStatusSnapshot = Nothing
+
+        'Loop each working set node, trying to find identical game state
+        'in the unique leaves list by looping it and comparing state vars.
+        For Each objWorkingSetNode As clsStatusSnapshot In mlstWorkingSet
+            'Look for matching game state already in unique nodes list
+            blnFoundUniqueMatch = False
+            For Each objUniqueNode In lstUniqueLeaves
+                If IsIdenticalGameState(objWorkingSetNode, objUniqueNode) Then
+                    blnFoundUniqueMatch = True
+                    Exit For 'objUniqueNode remains as current match
+                End If
+            Next
+
+            If blnFoundUniqueMatch Then
+                'Add this leaf to the list of nodes to remove from the working set, 
+                '(don't delete it now, that would screw up iteration, and 
+                'make ALL its parent have the unique node it matched as a child
+                lstLeavesToRemoveFromWorkingSet.Add(objWorkingSetNode)
+
+                For Each objParentNode As clsStatusSnapshot In objWorkingSetNode.Parent.Priors
+                    'Cut link to current working set node
+                    objParentNode.Children.Remove(objWorkingSetNode)
+
+                    'Make this parent link to the unique node
+                    objParentNode.AddChild(objUniqueNode.Parent)
+                    objUniqueNode.Parent.AddPrior(objParentNode)
+                Next
+            Else
+                'Add current leaf to the unique leafs list
+                lstUniqueLeaves.Add(objWorkingSetNode)
+            End If
+        Next
+
+        'Clean nodes no longer in use from the WS
+        For Each objNodeToDelete As clsStatusSnapshot In lstLeavesToRemoveFromWorkingSet
+            mlstWorkingSet.Remove(objNodeToDelete)
+        Next
+    End Sub
+
+    ''' <summary>
+    ''' Determines whether the parameters represent the same current flag status state of the game.
+    ''' </summary>
+    ''' <param name="pobjNode1">The first node to compare.</param>
+    ''' <param name="pobjNode2">The second node to compate.</param>
+    ''' <returns>
+    ''' <c>true</c> if [is identical game state]; otherwise, <c>false</c>.
+    ''' </returns>
+    Private Function IsIdenticalGameState(ByVal pobjNode1 As clsStatusSnapshot, ByVal pobjNode2 As clsStatusSnapshot) As Boolean
+        Return pobjNode1.BlueFlagHolderClientID = pobjNode2.BlueFlagHolderClientID AndAlso _
+            pobjNode1.BlueFlagInBase = pobjNode2.BlueFlagInBase AndAlso _
+            pobjNode1.BlueFlagResetTime = pobjNode2.BlueFlagResetTime AndAlso _
+            pobjNode1.RedFlagHolderClientID = pobjNode2.RedFlagHolderClientID AndAlso _
+            pobjNode1.RedFlagInBase = pobjNode2.RedFlagInBase AndAlso _
+            pobjNode1.RedFlagResetTime = pobjNode2.RedFlagResetTime
     End Function
 #End Region
 End Class
