@@ -8,8 +8,6 @@ Imports QuakeStats.LogParsing.QuakeObjects
 Imports System.Text.RegularExpressions
 Imports System.Threading
 
-'TODO: Make SystemSetting.SettingKey a unique column
-
 Namespace LogParsing
     Public Class clsStatsParser
 #Region "Constants"
