@@ -67,6 +67,8 @@
     <Import Include="System.Xml.Linq" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Graph\clsDirectedGraph.vb" />
+    <Compile Include="Graph\clsGraph.vb" />
     <Compile Include="clsHighPerformanceTimer.vb" />
     <Compile Include="clsSystemSettings.vb" />
     <Compile Include="frmMain.vb">
