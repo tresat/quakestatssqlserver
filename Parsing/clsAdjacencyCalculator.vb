@@ -4,8 +4,6 @@ Option Strict On
 Imports System.Data.SqlClient
 Imports QuakeStats.Utilities.clsHighPerformanceTimer
 
-'TODO: Add server uppage adjacencies calculator, should be run before game adjacency determination.
-
 Namespace LogParsing
     Public Class clsAdjacencyCalculator
 #Region "Member Vars"
@@ -35,15 +33,36 @@ Namespace LogParsing
 
 #Region "Public Functionality"
         Public Sub CalculateAllAdjacencies()
+            CalculateServerUppageAdjacencies()
             CalculateGameAdjacencies()
-
             CalculateInGameClientAdjacencies()
         End Sub
 #End Region
 
 #Region "Private Helpers"
         ''' <summary>
-        ''' Calculates the in-game client adjacencies.  No dependancies.
+        ''' Calculates the server uppage adjuacencies.
+        ''' </summary>
+        Private Sub CalculateServerUppageAdjacencies()
+            Dim sqlcmdCalc As SqlCommand
+
+            mobjTimer.StartTimer()
+            Print("Beginning server uppage adjacency calculations...")
+
+            sqlcmdCalc = New SqlCommand("Calculations.spLinkServerUppages", mcxnStatsDB)
+            sqlcmdCalc.CommandType = CommandType.StoredProcedure
+            sqlcmdCalc.CommandTimeout = 0
+
+            sqlcmdCalc.ExecuteNonQuery()
+
+            mobjTimer.StopTimer()
+            Print("Finished server uppage adjacency calculations in " & mobjTimer.GetResultAsTimeString & " (actual " & mobjTimer.GetElapsedAsTimeString & ").")
+        End Sub
+
+        ''' <summary>
+        ''' Calculates the in-game client adjacencies.  Should be run
+        ''' after server uppage adjacencies are calculated, so that cross-uppage
+        ''' game relationships can be established.
         ''' </summary>
         Private Sub CalculateInGameClientAdjacencies()
             Dim sqlcmdCalc As SqlCommand
