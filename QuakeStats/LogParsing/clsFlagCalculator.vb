@@ -14,7 +14,7 @@ Imports System.Math
 Namespace LogParsing
     Public Class clsFlagCalculator
 #Region "Inner Types"
-        Private Enum enuTeamType
+        Public Enum enuTeamType
             None
             Red
             Blue
@@ -36,7 +36,7 @@ Namespace LogParsing
         End Enum
 
 #Region "Status Snapshot"
-        Private Class clsStatusSnapshot
+        Public Class clsStatusSnapshot
 #Region "Member Variables"
             Private mlngNodeID As Long
 
@@ -197,7 +197,7 @@ Namespace LogParsing
 #End Region
 
 #Region "Status Transition"
-        Private Class clsStatusTransition
+        Public Class clsStatusTransition
 #Region "Member Variables"
             Private mobjPriors As List(Of clsStatusSnapshot)
             Private mobjSubsequent As clsStatusSnapshot
@@ -1887,7 +1887,7 @@ Namespace LogParsing
             Loop
 
             'Check if there is a next parent at the decision point
-            If plstPath Then
+            'If plstPath Then
 
         End Function
 

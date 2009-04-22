@@ -72,56 +72,6 @@ Namespace Graph
 #End Region
     End Class
 #End Region
-
-#Region "EdgeAlreadyLinkedException"
-    Public Class EdgeAlreadyLinkedException
-        Inherits Exception
-
-#Region "Member Vars"
-        Private mlngEdgeID As Long
-        Private mlngVertexID1 As Long
-        Private mlngVertexID2 As Long
-#End Region
-
-#Region "Properties"
-        Public ReadOnly Property EdgeID() As Long
-            Get
-                Return mlngEdgeID
-            End Get
-        End Property
-
-        Public ReadOnly Property VertexID1() As Long
-            Get
-                Return mlngVertexID1
-            End Get
-        End Property
-
-        Public ReadOnly Property VertexID2() As Long
-            Get
-                Return mlngVertexID2
-            End Get
-        End Property
-#End Region
-
-#Region "Constructors"
-        Public Sub New(ByVal plngEdgeID As Long, ByVal plngVertexID1 As Long, ByVal plngVertexID2 As Long)
-            MyBase.New()
-
-            mlngEdgeID = plngEdgeID
-            mlngVertexID1 = plngVertexID1
-            mlngVertexID2 = plngVertexID2
-        End Sub
-
-        Public Sub New(ByVal plngEdgeID As Long, ByVal plngVertexID1 As Long, ByVal plngVertexID2 As Long, ByVal pstrMessage As String)
-            MyBase.New(pstrMessage)
-
-            mlngEdgeID = plngEdgeID
-            mlngVertexID1 = plngVertexID1
-            mlngVertexID2 = plngVertexID2
-        End Sub
-#End Region
-    End Class
-#End Region
 #End Region
 
     Public Class clsGraph(Of GraphVertexPayload, GraphEdgePayload)
@@ -158,7 +108,7 @@ Namespace Graph
 #End Region
 
 #Region "Constructors"
-            Public Sub New(ByVal plngVertexID As Long, Optional ByRef pvpPayload As VertexPayload = Nothing)
+            Protected Friend Sub New(ByVal plngVertexID As Long, Optional ByRef pvpPayload As VertexPayload = Nothing)
                 mlngVertexID = plngVertexID
                 mvpPayload = pvpPayload
             End Sub
@@ -219,46 +169,15 @@ Namespace Graph
 #End Region
 
 #Region "Constructors"
-            Public Sub New(ByVal plngEdgeID As Long, Optional ByRef pepPayload As EdgePayload = Nothing)
+            Protected Friend Sub New(ByVal plngEdgeID As Long, ByVal plngVertexID1 As Long, ByVal plngVertexID2 As Long, Optional ByRef pepPayload As EdgePayload = Nothing)
                 mlngEdgeID = plngEdgeID
                 mepPayload = pepPayload
-                mlngVertexID1 = Nothing
-                mlngVertexID2 = Nothing
+                mlngVertexID1 = plngVertexID1
+                mlngVertexID2 = plngVertexID2
             End Sub
 #End Region
 
 #Region "Public Functionality"
-            ''' <summary>
-            ''' Adds the vertex to the edge, if it is not already attached to 2 vertices,
-            ''' in which case it throws an exception.
-            ''' </summary>
-            ''' <param name="plngVertexID">The vertex ID of the vertex to attach to.</param>
-            Public Sub AddVertex(ByVal plngVertexID As Long)
-                If mlngVertexID1 = Nothing Then
-                    mlngVertexID1 = plngVertexID
-                Else
-                    If mlngVertexID2 = Nothing Then
-                        mlngVertexID2 = plngVertexID
-                    Else
-                        Throw New EdgeAlreadyLinkedException(mlngEdgeID, mlngVertexID1, mlngVertexID2)
-                    End If
-                End If
-            End Sub
-
-            ''' <summary>
-            ''' Removes the vertex, if it exists linked to this edge.  Else throws exeption.
-            ''' </summary>
-            ''' <param name="plngVertexID">The vertex ID to remove.</param>
-            Public Sub RemoveVertex(ByVal plngVertexID As Long)
-                If mlngVertexID1 = plngVertexID Then
-                    mlngVertexID1 = Nothing
-                ElseIf mlngVertexID2 = plngVertexID Then
-                    mlngVertexID2 = Nothing
-                Else
-                    Throw New VertexDoesntExistException(plngVertexID, "Can't remove, vertex not linked to this edge.")
-                End If
-            End Sub
-
             ''' <summary>
             ''' For convienience, adds all vertices to a list, for iteration.
             ''' </summary>
@@ -292,6 +211,9 @@ Namespace Graph
         Public Sub New()
             mlngNextVertexID = 1
             mlngNextEdgeID = 1
+
+            mdctEdges = New Dictionary(Of Long, clsEdge(Of GraphEdgePayload))
+            mdctVertices = New Dictionary(Of Long, clsVertex(Of GraphVertexPayload))
         End Sub
 #End Region
 
@@ -323,41 +245,6 @@ Namespace Graph
         End Function
 
         ''' <summary>
-        ''' Adds a new, disconnected edge.
-        ''' </summary>
-        ''' <param name="pepEdgePayload">The edge's payload.</param>
-        ''' <returns>The new edge ID</returns>
-        Public Function AddNewEdge(ByVal pepEdgePayload As GraphEdgePayload) As Long
-            Dim eNew As New clsEdge(Of GraphEdgePayload)(mlngNextEdgeID, pepEdgePayload)
-
-            mdctEdges.Add(eNew.EdgeID, eNew)
-
-            mlngNextEdgeID += 1
-
-            Return eNew.EdgeID
-        End Function
-
-        ''' <summary>
-        ''' Adds the new edge to an existing vertex.
-        ''' </summary>
-        ''' <param name="plngExistingVertexID">The existing vertex ID.</param>
-        ''' <param name="pepEdgePayload">The payload for the new edge.</param>
-        ''' <returns>The new edge's ID.</returns>
-        Public Function AddNewEdgeFromExistingVertex(ByVal plngExistingVertexID As Long, _
-                                                     Optional ByRef pepEdgePayload As GraphEdgePayload = Nothing) As Long
-            Dim eNew As New clsEdge(Of GraphEdgePayload)(mlngNextEdgeID, pepEdgePayload)
-
-            mdctVertices(plngExistingVertexID).AddEdge(eNew.EdgeID)
-            eNew.AddVertex(plngExistingVertexID)
-
-            mdctEdges.Add(eNew.EdgeID, eNew)
-
-            mlngNextEdgeID += 1
-
-            Return eNew.EdgeID
-        End Function
-
-        ''' <summary>
         ''' Adds a new, disconnected vertex to the graph
         ''' </summary>
         ''' <param name="pvpPayload">Payload for the new vertex.</param>
@@ -373,57 +260,34 @@ Namespace Graph
         End Function
 
         ''' <summary>
-        ''' Adds a new vertex to the graph with the specified payload, connected to the specified vertex by a new edge.  
-        ''' Creates a single new edge with the specified payload. 
+        ''' Adds a new vertex to the graph with the specified payload, connected to the specified vertex.  
+        ''' Creates a single new edge with the specified payload to connect the new vertex.
         ''' </summary>
         ''' <param name="plngExistingVertexID">The vertex to create the new vertex off of.</param>
         ''' <param name="pvpVertexPayload">The payload of the new vertex to create.</param>
         ''' <param name="pepEdgePayload">The payload of the new edge to create.</param>
         ''' <returns>VertexID of new vertex.</returns>
-        Public Function AddNewVertexFromExistingVertex(ByVal plngExistingVertexID As Long, _
+        Public Function AddNewVertex(ByVal plngExistingVertexID As Long, _
                                 Optional ByRef pvpVertexPayload As GraphVertexPayload = Nothing, _
                                 Optional ByRef pepEdgePayload As GraphEdgePayload = Nothing) As Long
-            Dim eNew As New clsEdge(Of GraphEdgePayload)(mlngNextEdgeID, pepEdgePayload)
-            Dim vNew As New clsVertex(Of GraphVertexPayload)(mlngNextVertexID, pvpVertexPayload)
+            Dim vNew As clsVertex(Of GraphVertexPayload)
+            Dim eNew As clsEdge(Of GraphEdgePayload)
 
-            eNew.AddVertex(mlngNextVertexID)
-            vNew.AddEdge(eNew.EdgeID)
+            If Not mdctVertices.Keys.Contains(plngExistingVertexID) Then
+                Throw New VertexDoesntExistException(plngExistingVertexID)
+            End If
 
+            vNew = New clsVertex(Of GraphVertexPayload)(mlngNextVertexID, pvpVertexPayload)
             mdctVertices.Add(vNew.VertexID, vNew)
+
+            eNew = New clsEdge(Of GraphEdgePayload)(mlngNextEdgeID, plngExistingVertexID, mlngNextVertexID, pepEdgePayload)
             mdctEdges.Add(eNew.EdgeID, eNew)
+
+            mdctVertices(plngExistingVertexID).AddEdge(eNew.EdgeID)
+            vNew.AddEdge(eNew.EdgeID)
 
             mlngNextVertexID += 1
             mlngNextEdgeID += 1
-
-            Return vNew.VertexID
-        End Function
-
-        ''' <summary>
-        ''' Adds a new vertex to the graph with the specified payload, connected to the specified edge.
-        ''' Throws exception if edge already connected to 2 vertices or doesn't exist.
-        ''' </summary>
-        ''' <param name="plngEdgeID">The edge to connect the new vertex to.</param>
-        ''' <param name="pvpPayload">The payload of the new vertex to create.</param>
-        ''' <returns>VertexID of new vertex.</returns>
-        Public Function AddNewVertexFromExistingEdge(ByVal plngEdgeID As Long, Optional ByRef pvpPayload As GraphVertexPayload = Nothing) As Long
-            Dim vNew As clsVertex(Of GraphVertexPayload)
-
-            If mdctEdges.Keys.Contains(plngEdgeID) Then
-                If mdctEdges(plngEdgeID).VertexID1 = Nothing Or mdctEdges(plngEdgeID).VertexID2 = Nothing Then
-                    vNew = New clsVertex(Of GraphVertexPayload)(mlngNextVertexID, pvpPayload)
-
-                    mdctEdges(plngEdgeID).AddVertex(mlngNextVertexID)
-                    vNew.AddEdge(plngEdgeID)
-
-                    mdctVertices.Add(vNew.VertexID, vNew)
-
-                    mlngNextVertexID += 1
-                Else
-                    Throw New EdgeAlreadyLinkedException(plngEdgeID, mdctEdges(plngEdgeID).VertexID1, mdctEdges(plngEdgeID).VertexID2)
-                End If
-            Else
-                Throw New EdgeDoesntExistException(plngEdgeID)
-            End If
 
             Return vNew.VertexID
         End Function
@@ -435,19 +299,17 @@ Namespace Graph
         ''' <param name="plngVertexID1">The 1st vertex ID.</param>
         ''' <param name="plngVertexID2">The 2nd vertex ID.</param>
         ''' <returns></returns>
-        Public Function AddNewEdgeConnectingExistingVertices(ByVal plngVertexID1 As Long, ByVal plngVertexID2 As Long, Optional ByVal pepEdgePayload As GraphEdgePayload = Nothing) As Long
+        Public Function AddNewEdge(ByVal plngVertexID1 As Long, ByVal plngVertexID2 As Long, Optional ByRef pepEdgePayload As GraphEdgePayload = Nothing) As Long
             Dim eNew As clsEdge(Of GraphEdgePayload)
 
-            If mdctVertices.Keys.Contains(plngVertexID1) Then
+            If Not mdctVertices.Keys.Contains(plngVertexID1) Then
                 Throw New VertexDoesntExistException(plngVertexID1)
             End If
-            If mdctVertices.Keys.Contains(plngVertexID2) Then
+            If Not mdctVertices.Keys.Contains(plngVertexID2) Then
                 Throw New VertexDoesntExistException(plngVertexID2)
             End If
 
-            eNew = New clsEdge(Of GraphEdgePayload)(mlngNextEdgeID, pepEdgePayload)
-            eNew.AddVertex(plngVertexID1)
-            eNew.AddVertex(plngVertexID2)
+            eNew = New clsEdge(Of GraphEdgePayload)(mlngNextEdgeID, plngVertexID1, plngVertexID2, pepEdgePayload)
 
             mdctVertices(plngVertexID1).AddEdge(eNew.EdgeID)
             mdctVertices(plngVertexID2).AddEdge(eNew.EdgeID)

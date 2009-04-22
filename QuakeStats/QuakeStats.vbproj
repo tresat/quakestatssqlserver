@@ -94,19 +94,19 @@
       <DependentUpon>Settings.settings</DependentUpon>
       <DesignTimeSharedInput>True</DesignTimeSharedInput>
     </Compile>
-    <Compile Include="Parsing\clsAdjacencyCalculator.vb" />
-    <Compile Include="Parsing\clsFlagCalculator.vb" />
-    <Compile Include="Parsing\clsItemManager.vb" />
-    <Compile Include="Parsing\clsMapCalculator.vb" />
-    <Compile Include="Parsing\clsStatsParser.vb" />
-    <Compile Include="Parsing\clsWeaponManager.vb" />
-    <Compile Include="Parsing\QuakeObjects\clsClient.vb" />
-    <Compile Include="Parsing\QuakeObjects\clsDialog.vb" />
-    <Compile Include="Parsing\QuakeObjects\clsGame.vb" />
-    <Compile Include="Parsing\QuakeObjects\clsItemPickup.vb" />
-    <Compile Include="Parsing\QuakeObjects\clsKill.vb" />
-    <Compile Include="Parsing\QuakeObjects\clsServerUppage.vb" />
-    <Compile Include="Parsing\clsTimestamp.vb" />
+    <Compile Include="LogParsing\clsAdjacencyCalculator.vb" />
+    <Compile Include="LogParsing\clsFlagCalculator.vb" />
+    <Compile Include="LogParsing\clsItemManager.vb" />
+    <Compile Include="LogParsing\clsMapCalculator.vb" />
+    <Compile Include="LogParsing\clsStatsParser.vb" />
+    <Compile Include="LogParsing\clsWeaponManager.vb" />
+    <Compile Include="LogParsing\QuakeObjects\clsClient.vb" />
+    <Compile Include="LogParsing\QuakeObjects\clsDialog.vb" />
+    <Compile Include="LogParsing\QuakeObjects\clsGame.vb" />
+    <Compile Include="LogParsing\QuakeObjects\clsItemPickup.vb" />
+    <Compile Include="LogParsing\QuakeObjects\clsKill.vb" />
+    <Compile Include="LogParsing\QuakeObjects\clsServerUppage.vb" />
+    <Compile Include="LogParsing\clsTimestamp.vb" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="frmMain.resx">

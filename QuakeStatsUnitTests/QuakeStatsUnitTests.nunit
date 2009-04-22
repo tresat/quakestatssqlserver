@@ -1,0 +1,12 @@
+﻿<NUnitProject>
+  <Settings activeconfig="Debug" />
+  <Config name="Debug" binpathtype="Auto">
+    <assembly path="..\QuakeStatsUnitTests\bin\Debug\QuakeStatsUnitTests.dll" />
+  </Config>
+  <Config name="Release" binpathtype="Auto">
+    <assembly path="bin\Release\QuakeStatsUnitTests.dll" />
+    <assembly path="..\QuakeStats\bin\Release\QuakeStats.exe" />
+    <assembly path="bin\Release\QuakeStatsUnitTests.dll" />
+    <assembly path="..\QuakeStatsUnitTests\bin\Release\QuakeStatsUnitTests.dll" />
+  </Config>
+</NUnitProject>
