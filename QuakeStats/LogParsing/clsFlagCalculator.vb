@@ -450,6 +450,7 @@ Namespace LogParsing.FlagCalculator
         Private Sub DoCalculateGame(ByVal plngGameID As Long)
             Dim dtGameEvents As DataTable = GetGameEvents(plngGameID)
             Dim lstPotentialStatesToExamine As List(Of Long)
+            Dim lstFinalPaths As List(Of List(Of Long))
 
             'Walk the game events and do the flag calculations to build the game graph
             For intIdx As Integer = 0 To dtGameEvents.Rows.Count - 1
@@ -468,9 +469,12 @@ Namespace LogParsing.FlagCalculator
                 'vertex in the set to point to it.
                 ConsolidateWorkingSet()
 
-
                 RaiseEvent GameEventParsed(intIdx, dtGameEvents.Rows.Count, mlstWorkingSet.Count)
             Next
+
+            'The game graph should be 100% complete at this point.  We'll need to find
+            'a path from the source to the sink which tallies to the correct score
+            lstFinalPaths = mobjGameGraph.GetAllSourceSinkPaths()
         End Sub
 
         Private Sub AddNewGameEventToGraph(ByVal plngCurrentVertexID As Long, ByRef pdrGameEvent As DataRow)
@@ -538,7 +542,12 @@ Namespace LogParsing.FlagCalculator
             Next
 
             'Now delete the other (no longer in use) former end vertices from the graph
-            'TODO: this mobjGameGraph.re()
+            For Each lstVertexSet As List(Of Long) In lstVertexSets
+                intLimit = lstVertexSet.Count - 1
+                For intIdx As Integer = 1 To intLimit
+                    mobjGameGraph.RemoveVertex(lstVertexSet(intIdx))
+                Next
+            Next
         End Sub
 
 #End Region
