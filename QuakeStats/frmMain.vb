@@ -4,6 +4,7 @@ Option Strict On
 Imports System.Data.SqlClient
 Imports QuakeStats.LogParsing
 Imports System.Configuration
+Imports QuakeStats.LogParsing.FlagCalculator
 
 Public Class frmMain
 

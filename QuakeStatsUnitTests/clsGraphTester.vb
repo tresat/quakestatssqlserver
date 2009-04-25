@@ -2,7 +2,7 @@
 Option Explicit On
 
 Imports NUnit.Framework
-Imports QuakeStats.Graph
+Imports GraphLibrary.Graph
 
 <TestFixture()> _
 Public Class clsGraphTester

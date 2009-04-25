@@ -2,9 +2,10 @@
 Option Explicit On
 
 Imports NUnit.Framework
-Imports QuakeStats.Graph
+Imports GraphLibrary.DirectedGraph
 Imports QuakeStats.LogParsing
 Imports QuakeStats.LogParsing.QuakeObjects
+Imports QuakeStats.LogParsing.FlagCalculator
 
 <TestFixture()> _
 Public Class clsDirectedGraphTester
@@ -12,8 +13,8 @@ Public Class clsDirectedGraphTester
     Public Sub TestCreateDirectedGraph()
         Dim dgGraph As New clsDirectedGraph(Of Long, Long)
         Dim dgGraph2 As New clsDirectedGraph(Of Object, Object)
-        Dim dgGraph3 As New clsDirectedGraph(Of clsFlagCalculator.clsStatusSnapshot, clsFlagCalculator.clsStatusTransition)
-        Dim dgGraph4 As New clsDirectedGraph(Of clsFlagCalculator.clsStatusSnapshot, clsFlagCalculator.clsStatusTransition)(5)
+        Dim dgGraph3 As New clsDirectedGraph(Of stuStatusNode, stuStatusTransition)
+        Dim dgGraph4 As New clsDirectedGraph(Of stuStatusNode, stuStatusTransition)(5)
     End Sub
 
     <Test(), Description("Test constructor call with payload list"), Category("Constructor")> _
