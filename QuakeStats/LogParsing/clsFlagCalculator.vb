@@ -75,7 +75,7 @@ Namespace LogParsing.FlagCalculator
     End Structure
 #End Region
 
-#Region "Transition Event"
+#Region "Status Transition"
     Public Structure stuStatusTransition
 #Region "Member Vars"
         Public Significance As enuSignificanceType
@@ -114,6 +114,24 @@ Namespace LogParsing.FlagCalculator
 #End Region
 
     Public Class clsFlagCalculator
+#Region "Inner Types"
+#Region "Calculation Steps"
+        Public Enum enuCalculationStepType
+            ResetFlagCalculationsInDB
+            FetchingGameEvents
+            FetchedGameEvents
+            BuildingGameGraph
+            FindingPathsThroughGraph
+            FilteringPathsToScore
+        End Enum
+#End Region
+#End Region
+
+#Region "Constants"
+        Private Const MINT_FREQUENCY_OF_GAME_EVENT_PROCESSING_STATUS_NOTIFICATIONS As Integer = 10
+        Private Const MINT_FREQUENCY_OF_PATH_FILTERING_STATUS_NOTIFICATIONS As Integer = 10
+#End Region
+
 #Region "Member Variables"
         Private mcxnStatsDB As SqlConnection
         Private mobjTimer As Utilities.clsHighPerformanceTimer
@@ -141,7 +159,7 @@ Namespace LogParsing.FlagCalculator
 
 #Region "Events"
         Public Event GameParsed(ByVal pblnSuccess As Boolean)
-        Public Event GameEventParsed(ByVal pintCurrentEvent As Integer, ByVal pintTotalEvents As Integer, ByVal intWorkingSetCount As Integer)
+        Public Event GameCalculationStatusChanged(ByVal penuCurrentStep As enuCalculationStepType, ByVal plngIdx As Long, ByVal plngLimit As Long)
 #End Region
 
 #Region "Constructors"
@@ -157,9 +175,15 @@ Namespace LogParsing.FlagCalculator
         ''' </summary>
         ''' <param name="pintStopAfter">The number of games to stop calculating after (-1 = infinite).</param>
         ''' <param name="plngOnlyUncalced">Whether or not to recalculate already calculated games.</param>
-        Public Sub CalculateAllGames(Optional ByVal pintStopAfter As Integer = -1, Optional ByVal plngOnlyUnCalced As Boolean = True)
+        ''' <param name="pblnResetFlagCalculationsFirst">Whether or not to run Utilities.spResetFlagCalculations first.</param>
+        Public Sub CalculateAllGames(Optional ByVal pintStopAfter As Integer = -1, Optional ByVal plngOnlyUnCalced As Boolean = True, Optional ByVal pblnResetFlagCalculationsFirst As Boolean = False)
             Dim lngMinGameID = GetMinGameID()
             Dim lngMaxGameID = GetMaxGameID()
+
+            If pblnResetFlagCalculationsFirst Then
+                RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.ResetFlagCalculationsInDB, Nothing, Nothing)
+                ResetFlagCalculationsInDB()
+            End If
 
             Print("Begin calculating flag captures for " & lngMaxGameID - lngMinGameID & " maximum games, from: " & lngMinGameID & " to: " & lngMaxGameID & " ...")
             For lngCurrentGameID As Long = lngMinGameID To lngMaxGameID Step -1
@@ -211,6 +235,18 @@ Namespace LogParsing.FlagCalculator
 #End Region
 
 #Region "Private Helper Functions"
+        ''' <summary>
+        ''' Resets the flag calculations in DB by calling Utilities.spResetFlagCalculations
+        ''' </summary>
+        Private Sub ResetFlagCalculationsInDB()
+            Dim sqlcmdReset As New SqlCommand("Utilities.spResetFlagCalculations", mcxnStatsDB)
+
+            sqlcmdReset.CommandType = CommandType.StoredProcedure
+            sqlcmdReset.CommandTimeout = 0
+
+            sqlcmdReset.ExecuteNonQuery()
+        End Sub
+
         ''' <summary>
         ''' Gets the score for a team for a game which was written to the game log.
         ''' </summary>
@@ -448,12 +484,20 @@ Namespace LogParsing.FlagCalculator
         ''' </summary>
         ''' <param name="plngGameID">The game ID for calculate flag stats for.</param>
         Private Sub DoCalculateGame(ByVal plngGameID As Long)
+            RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FetchingGameEvents, Nothing, Nothing)
             Dim dtGameEvents As DataTable = GetGameEvents(plngGameID)
+            RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FetchedGameEvents, Nothing, dtGameEvents.Rows.Count)
+
             Dim lstPotentialStatesToExamine As List(Of Long)
-            Dim lstFinalPaths As List(Of List(Of Long))
+            Dim lstCompletePaths As List(Of List(Of Long))
+            Dim lstTallyingPaths As New List(Of List(Of Long))
 
             'Walk the game events and do the flag calculations to build the game graph
             For intIdx As Integer = 0 To dtGameEvents.Rows.Count - 1
+                If intIdx Mod MINT_FREQUENCY_OF_GAME_EVENT_PROCESSING_STATUS_NOTIFICATIONS = 0 Then
+                    RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.BuildingGameGraph, intIdx, dtGameEvents.Rows.Count - 1)
+                End If
+
                 'Save a copy of the collection of current sink nodes
                 lstPotentialStatesToExamine = New List(Of Long)(mlstWorkingSet)
 
@@ -468,18 +512,36 @@ Namespace LogParsing.FlagCalculator
                 'vertices with identical payloads, and alter all edges pointing to ANY
                 'vertex in the set to point to it.
                 ConsolidateWorkingSet()
-
-                RaiseEvent GameEventParsed(intIdx, dtGameEvents.Rows.Count, mlstWorkingSet.Count)
             Next
+
+            RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FindingPathsThroughGraph, Nothing, Nothing)
 
             'The game graph should be 100% complete at this point.  We'll need to find
             'a path from the source to the sink which tallies to the correct score
-            lstFinalPaths = mobjGameGraph.GetAllSourceSinkPaths()
+            lstCompletePaths = mobjGameGraph.GetAllNonLoopingSourceSinkPaths()
+
+            'Filter the paths based on the score
+            Dim lngIdx As Long = 0
+            For Each lstPath As List(Of Long) In lstCompletePaths
+                lngIdx += 1
+
+                If PathTalliesToScoreFromLog(lstPath) Then
+                    lstTallyingPaths.Add(lstPath)
+                End If
+
+                If lngIdx Mod MINT_FREQUENCY_OF_PATH_FILTERING_STATUS_NOTIFICATIONS = 0 Then
+                    RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FilteringPathsToScore, lngIdx, lstCompletePaths.Count)
+                End If
+            Next
         End Sub
 
         Private Sub AddNewGameEventToGraph(ByVal plngCurrentVertexID As Long, ByRef pdrGameEvent As DataRow)
-
+            'TODO: write me
         End Sub
+
+        Private Function PathTalliesToScoreFromLog(ByVal plstPath As List(Of Long)) As Boolean
+            'TODO: write me
+        End Function
 
         ''' <summary>
         ''' Consolidates the working set: makes each set of sink vertices

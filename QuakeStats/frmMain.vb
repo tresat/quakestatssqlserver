@@ -28,14 +28,17 @@ Public Class frmMain
         mobjFlagCalculator = New clsFlagCalculator(cxnStatsDB)
         mobjMapCalculator = New clsMapCalculator(cxnStatsDB)
         mobjAdjacencyCalculator = New clsAdjacencyCalculator(cxnStatsDB)
+
+        'Set validating type on masked text boxes
+        mtbX.ValidatingType = System.Type.GetType("Integer")
     End Sub
 
     Private Sub cmdParse_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdParse.Click
         mobjParser.Parse()
     End Sub
 
-    Private Sub cmdCalculateFlags_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdCalculateFlags.Click
-        mobjFlagCalculator.CalculateAllGames()
+    Private Sub cmdCalculateFlags_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdCalculateAllFlags.Click
+        mobjFlagCalculator.CalculateAllGames(pblnResetFlagCalculationsFirst:=chkResetFlagCalculations.Checked)
     End Sub
 
     Private Sub cmdCalculateMaps_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdCalculateMaps.Click
@@ -46,10 +49,34 @@ Public Class frmMain
         mobjAdjacencyCalculator.CalculateAllAdjacencies()
     End Sub
 
-    Private Sub mobjFlagCalculator_GameEventParsed(ByVal pintCurrentEvent As Integer, ByVal pintTotalEvents As Integer, ByVal pintWorkingSetSize As Integer) Handles mobjFlagCalculator.GameEventParsed
-        txtGameEventCurrent.Text = CStr(pintCurrentEvent)
-        txtGameEventTotal.Text = CStr(pintTotalEvents)
-        txtWorkingSetSize.Text = CStr(pintWorkingSetSize)
+    Private Sub cmdCalculateNextXFlags_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdCalculateNextXFlags.Click
+        mobjFlagCalculator.CalculateAllGames(CInt(mtbX.ValidateText), , chkResetFlagCalculations.Checked)
+    End Sub
+
+    Private Sub mobjFlagCalculator_GameCalculationStatusChanged(ByVal penuCurrentStep As LogParsing.FlagCalculator.clsFlagCalculator.enuCalculationStepType, ByVal plngIdx As Long, ByVal plngLimit As Long) Handles mobjFlagCalculator.GameCalculationStatusChanged
+        Select Case penuCurrentStep
+            Case clsFlagCalculator.enuCalculationStepType.ResetFlagCalculationsInDB
+                txtCurrentStep.Text = "Reseting DB"
+                txtPercentDoneCurrentStep.Text = "n/a"
+            Case clsFlagCalculator.enuCalculationStepType.FetchingGameEvents
+                txtCurrentStep.Text = "Fetching Events"
+                txtPercentDoneCurrentStep.Text = "n/a"
+            Case clsFlagCalculator.enuCalculationStepType.FetchedGameEvents
+                txtCurrentStep.Text = "Fetched Events"
+                txtPercentDoneCurrentStep.Text = "n/a"
+            Case clsFlagCalculator.enuCalculationStepType.BuildingGameGraph
+                txtCurrentStep.Text = "Building Graph"
+                txtPercentDoneCurrentStep.Text = String.Format("{0}%", (plngIdx / plngLimit) * 100)
+            Case clsFlagCalculator.enuCalculationStepType.FindingPathsThroughGraph
+                txtCurrentStep.Text = "Finding Paths"
+                txtPercentDoneCurrentStep.Text = "n/a"
+            Case clsFlagCalculator.enuCalculationStepType.FilteringPathsToScore
+                txtCurrentStep.Text = "Filtering Paths"
+                txtPercentDoneCurrentStep.Text = String.Format("{0}%", (plngIdx / plngLimit) * 100)
+            Case Else
+                Throw New ArgumentException("Bad step type: " & penuCurrentStep)
+        End Select
+
         Application.DoEvents()
     End Sub
 

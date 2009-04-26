@@ -130,7 +130,7 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\..\Libraries\GraphLibrary\GraphLibrary.vbproj">
+    <ProjectReference Include="..\..\..\..\Libraries\GraphLibrary\GraphLibrary\GraphLibrary.vbproj">
       <Project>{D7AC361A-8188-4CEB-9DFE-8F0F63F9DBE1}</Project>
       <Name>GraphLibrary</Name>
     </ProjectReference>
