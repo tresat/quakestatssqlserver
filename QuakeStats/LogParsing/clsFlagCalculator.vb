@@ -541,14 +541,58 @@ Namespace LogParsing.FlagCalculator
                     RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FilteringPathsToScore, lngIdx, lstCompletePaths.Count)
                 End If
             Next
+
+
         End Sub
 
         Private Sub AddNewGameEventToGraph(ByVal plngCurrentVertexID As Long, ByRef pdrGameEvent As DataRow)
             'TODO: write me
         End Sub
 
+        ''' <summary>
+        ''' Determines which of the pathes tallies to the score from log.
+        ''' </summary>
+        ''' <param name="plstPath">The path to test.</param>
+        ''' <returns><c>true</c> if path tallies to the scores from the log, <c>false</c> otherwise.</returns>
         Private Function PathTalliesToScoreFromLog(ByVal plstPath As List(Of Long)) As Boolean
-            'TODO: write me
+            Dim vCurr As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphVertex(Of stuStatusNode)
+            Dim vNext As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphVertex(Of stuStatusNode)
+            Dim eConnections As List(Of clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphEdge(Of stuStatusTransition))
+            Dim intLimit As Integer = plstPath.Count - 1
+
+            Dim intRedScore As Integer = 0
+            Dim intBlueScore As Integer = 0
+
+            'Travel the path, starting from the start node to the
+            'end of the path
+            vCurr = mobjGameGraph.GetVertex(plstPath(0))
+            If plstPath.Count > 1 Then
+                For intIdx As Integer = 1 To intLimit
+                    'Get the transitioning edges
+                    vNext = mobjGameGraph.GetVertex(plstPath(intIdx))
+                    'There should only be 1 transitioning edge
+                    eConnections = mobjGameGraph.GetConnectingEdges(vCurr.VertexID, vNext.VertexID)
+                    If eConnections.Count = 1 Then
+                        'Check if the connection is a flag capture
+                        If eConnections(0).Payload.Significance = enuSignificanceType.Capture Then
+                            Select Case eConnections(0).Payload.Client1Team
+                                Case enuTeamType.Red
+                                    intRedScore += 1
+                                Case enuTeamType.Blue
+                                    intBlueScore += 1
+                                Case Else
+                                    Throw New Exception("Team type: " & eConnections(0).Payload.Client1Team & " should not be capturing flag, edge ID: " & eConnections(0).EdgeID)
+                            End Select
+                        End If
+                    Else
+                        Throw New Exception("There should be only 1 edge connecting all vertices in path, " & eConnections.Count & " edges exist between vertices with IDs: " & vCurr.VertexID & " and " & vNext.VertexID)
+                    End If
+                Next
+            End If
+
+            'Now check if we've matched the scores from the log
+            Return (intRedScore = mintGoalRedScore AndAlso _
+                    intBlueScore = mintGoalBlueScore)
         End Function
 
         ''' <summary>
