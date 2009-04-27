@@ -179,6 +179,7 @@ Namespace LogParsing.FlagCalculator
         Public Sub CalculateAllGames(Optional ByVal pintStopAfter As Integer = -1, Optional ByVal plngOnlyUnCalced As Boolean = True, Optional ByVal pblnResetFlagCalculationsFirst As Boolean = False)
             Dim lngMinGameID = GetMinGameID()
             Dim lngMaxGameID = GetMaxGameID()
+            Dim intGamesCalced As Integer = 0
 
             If pblnResetFlagCalculationsFirst Then
                 RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.ResetFlagCalculationsInDB, Nothing, Nothing)
@@ -186,11 +187,17 @@ Namespace LogParsing.FlagCalculator
             End If
 
             Print("Begin calculating flag captures for " & lngMaxGameID - lngMinGameID & " maximum games, from: " & lngMinGameID & " to: " & lngMaxGameID & " ...")
-            For lngCurrentGameID As Long = lngMinGameID To lngMaxGameID Step -1
-                If IsCompleteInLog(lngCurrentGameID) And IsCTF(lngCurrentGameID) Then
-                    If plngOnlyUnCalced AndAlso Not IsFlagCalculationsComplete(lngCurrentGameID) Then
-                        CalculateGame(lngCurrentGameID, False)
+            For lngCurrentGameID As Long = lngMinGameID To lngMaxGameID
+                If (pintStopAfter <> -1 AndAlso intGamesCalced < pintStopAfter) Or _
+                        (pintStopAfter = -1) Then
+                    If IsCompleteInLog(lngCurrentGameID) And IsCTF(lngCurrentGameID) Then
+                        If plngOnlyUnCalced AndAlso Not IsFlagCalculationsComplete(lngCurrentGameID) Then
+                            CalculateGame(lngCurrentGameID, False)
+                            intGamesCalced += 1
+                        End If
                     End If
+                Else
+                    Exit For
                 End If
             Next
             Print("Finished calculating flag captures.")
@@ -204,7 +211,8 @@ Namespace LogParsing.FlagCalculator
         Public Sub CalculateGame(ByVal plngGameID As Long, Optional ByVal pblnVerifyGameGoodToCalc As Boolean = True)
             InitCalculateGame(plngGameID)
 
-            If pblnVerifyGameGoodToCalc AndAlso IsCTF(plngGameID) AndAlso IsCompleteInLog(plngGameID) Then
+            If (pblnVerifyGameGoodToCalc AndAlso IsCTF(plngGameID) AndAlso IsCompleteInLog(plngGameID)) Or _
+                (Not pblnVerifyGameGoodToCalc) Then
                 Try
                     Print("Game: " & plngGameID & " on map: " & GetMapName(plngGameID) & " init: " & GetInitGameLineNo(plngGameID) & " for map: " & GetMapName(plngGameID) & " ")
                     mobjTimer.StartTimer()
@@ -239,7 +247,7 @@ Namespace LogParsing.FlagCalculator
         ''' Resets the flag calculations in DB by calling Utilities.spResetFlagCalculations
         ''' </summary>
         Private Sub ResetFlagCalculationsInDB()
-            Dim sqlcmdReset As New SqlCommand("Utilities.spResetFlagCalculations", mcxnStatsDB)
+            Dim sqlcmdReset As New SqlCommand("Utility.spResetFlagCalculations", mcxnStatsDB)
 
             sqlcmdReset.CommandType = CommandType.StoredProcedure
             sqlcmdReset.CommandTimeout = 0

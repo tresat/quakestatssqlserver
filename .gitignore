@@ -1,0 +1,11 @@
+QuakeStats/bin
+QuakeStats/dead
+QuakeStats/My Project
+QuakeStats.suo
+QuakeStats/obj
+QuakeStatsUnitTests/bin
+QuakeStatsUnitTests/obj
+QuakeStatsUnitTests/dead
+QuakeStatsUnitTests/My Project
+QuakeStatsUnitTests/TestResult.xml
+QuakeStatsUnitTests/QuakeStatsUnitTests.VisualState.xml

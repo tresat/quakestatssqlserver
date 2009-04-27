@@ -50,7 +50,7 @@ Public Class frmMain
     End Sub
 
     Private Sub cmdCalculateNextXFlags_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdCalculateNextXFlags.Click
-        mobjFlagCalculator.CalculateAllGames(CInt(mtbX.ValidateText), , chkResetFlagCalculations.Checked)
+        mobjFlagCalculator.CalculateAllGames(CInt(mtbX.Text), , chkResetFlagCalculations.Checked)
     End Sub
 
     Private Sub mobjFlagCalculator_GameCalculationStatusChanged(ByVal penuCurrentStep As LogParsing.FlagCalculator.clsFlagCalculator.enuCalculationStepType, ByVal plngIdx As Long, ByVal plngLimit As Long) Handles mobjFlagCalculator.GameCalculationStatusChanged

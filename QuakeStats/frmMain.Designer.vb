@@ -187,6 +187,7 @@ Partial Class frmMain
         Me.mtbX.PromptChar = Global.Microsoft.VisualBasic.ChrW(32)
         Me.mtbX.Size = New System.Drawing.Size(46, 20)
         Me.mtbX.TabIndex = 17
+        Me.mtbX.Text = "5"
         Me.mtbX.TextAlign = System.Windows.Forms.HorizontalAlignment.Right
         '
         'lblX
