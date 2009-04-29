@@ -80,6 +80,8 @@ Namespace LogParsing.FlagCalculator
 #Region "Member Vars"
         Public Significance As enuSignificanceType
 
+        Public EventID As Long
+
         Public EventTime As Long
         Public LineNo As Long
         Public EventType As String
@@ -130,6 +132,8 @@ Namespace LogParsing.FlagCalculator
 #Region "Constants"
         Private Const MINT_FREQUENCY_OF_GAME_EVENT_PROCESSING_STATUS_NOTIFICATIONS As Integer = 10
         Private Const MINT_FREQUENCY_OF_PATH_FILTERING_STATUS_NOTIFICATIONS As Integer = 10
+
+        Private Const MINT_SECONDS_UNTIL_FLAG_RESET As Integer = 30
 #End Region
 
 #Region "Member Variables"
@@ -216,7 +220,9 @@ Namespace LogParsing.FlagCalculator
                 Try
                     Print("Game: " & plngGameID & " on map: " & GetMapName(plngGameID) & " init: " & GetInitGameLineNo(plngGameID) & " for map: " & GetMapName(plngGameID) & " ")
                     mobjTimer.StartTimer()
-                    DoCalculateGame(plngGameID)
+                    If Not DoCalculateGame(plngGameID) Then
+                        Throw New Exception("DoCalculateGame returned false!")
+                    End If
 
                     Print("**************************************SUCCEEDED**************************************")
                     RaiseEvent GameParsed(True)
@@ -491,7 +497,8 @@ Namespace LogParsing.FlagCalculator
         ''' ...or fails to.
         ''' </summary>
         ''' <param name="plngGameID">The game ID for calculate flag stats for.</param>
-        Private Sub DoCalculateGame(ByVal plngGameID As Long)
+        ''' <returns><c>true/false</c> on success/fail.</returns>
+        Private Function DoCalculateGame(ByVal plngGameID As Long) As Boolean
             RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FetchingGameEvents, Nothing, Nothing)
             Dim dtGameEvents As DataTable = GetGameEvents(plngGameID)
             RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FetchedGameEvents, Nothing, dtGameEvents.Rows.Count)
@@ -499,9 +506,10 @@ Namespace LogParsing.FlagCalculator
             Dim lstPotentialStatesToExamine As List(Of Long)
             Dim lstCompletePaths As List(Of List(Of Long))
             Dim lstTallyingPaths As New List(Of List(Of Long))
+            Dim intLimit As Integer = dtGameEvents.Rows.Count - 1
 
             'Walk the game events and do the flag calculations to build the game graph
-            For intIdx As Integer = 0 To dtGameEvents.Rows.Count - 1
+            For intIdx As Integer = 0 To intLimit
                 If intIdx Mod MINT_FREQUENCY_OF_GAME_EVENT_PROCESSING_STATUS_NOTIFICATIONS = 0 Then
                     RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.BuildingGameGraph, intIdx, dtGameEvents.Rows.Count - 1)
                 End If
@@ -542,12 +550,442 @@ Namespace LogParsing.FlagCalculator
                 End If
             Next
 
+            'If there is at least one path remaining, game calculations succeed
+            If lstTallyingPaths.Count < 0 Then
+                'Finally, update stats in the DB using the first path (for now)
+                UpdateDBFlagStatisticsForPath(lstTallyingPaths(0)) 'TODO: Consider a better way of doing this
 
-        End Sub
+                Return True
+            Else
+                Return False
+            End If
+        End Function
 
+        ''' <summary>
+        ''' Processes the current game event in the data table, modifies the game
+        ''' graph to include the nessecary transitions.
+        ''' </summary>
+        ''' <param name="plngCurrentVertexID">The current vertex ID (in the working set to build new vertices off of).</param>
+        ''' <param name="pdrGameEvent">The game event data row.</param>
         Private Sub AddNewGameEventToGraph(ByVal plngCurrentVertexID As Long, ByRef pdrGameEvent As DataRow)
-            'TODO: write me
+            Dim stuCurrentStatus As stuStatusNode = mobjGameGraph.GetVertex(plngCurrentVertexID).Payload
+            Dim lngNewStatusNodeID As Long
+            Dim lngEventTime As Long = CLng(pdrGameEvent("EventTime"))
+            Dim strEventType As String = CStr(pdrGameEvent("EventType"))
+
+            'First, we'll check if either of the timers are expired, if so, 
+            'we'll need to create a new transition 
+            If stuCurrentStatus.RedFlagResetTime <> 0 AndAlso lngEventTime >= stuCurrentStatus.RedFlagResetTime Then
+                'Add a transition to consider what would happen if the timer 
+                'expired before this event occurs
+                lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, True, _
+                                                      stuCurrentStatus.RedFlagHolderClientID, 0, _
+                                                      stuCurrentStatus.RedFlagResetTime, 0)
+                mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.ResetDueToRedTimerExpiration))
+
+                stuCurrentStatus = mobjGameGraph.GetVertex(lngNewStatusNodeID).Payload
+                'Continue processing this event to consider what would happen if the event
+                'fires before the timer expires
+            End If
+            If stuCurrentStatus.BlueFlagResetTime <> 0 AndAlso lngEventTime >= stuCurrentStatus.BlueFlagResetTime Then
+                'Add a transition to consider what would happen if the timer 
+                'expired before this event occurs
+                lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.BlueFlagInBase, _
+                                                      0, stuCurrentStatus.BlueFlagHolderClientID, _
+                                                      0, stuCurrentStatus.BlueFlagResetTime)
+                mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.ResetDueToBlueTimerExpiration))
+
+                'Continue processing this event to consider what would happen if the event
+                'fires before the timer expires
+            End If
+
+            Select Case UCase$(strEventType)
+                Case "ITEM"
+                    ConsiderItemEvent(plngCurrentVertexID, pdrGameEvent)
+                Case "KILL"
+                    ConsiderKillEvent(plngCurrentVertexID, pdrGameEvent)
+                Case "END"
+                    ConsiderEndEvent(plngCurrentVertexID, pdrGameEvent)
+                Case "NUMBERCHANGE"
+                    ConsiderNumberChangeEvent(plngCurrentVertexID, pdrGameEvent)
+                Case Else
+                    Throw New Exception("UNKNOWN event type: " & strEventType)
+            End Select
         End Sub
+
+        ''' <summary>
+        ''' Adjusts the game graph, using the current vertex ID as the start point,
+        ''' and adds the new state and the appropriate transition to the new state
+        ''' to the game graph for a client NUMBERCHANGE (log ID/team ID = client ID changed) event.
+        ''' </summary>
+        ''' <param name="plngCurrentVertexID">The current vertex ID.</param>
+        ''' <param name="pdrGameEvent">The game event row.</param>
+        Private Sub ConsiderNumberChangeEvent(ByVal plngCurrentVertexID As Long, ByRef pdrGameEvent As DataRow)
+            Dim stuCurrentStatus As stuStatusNode = mobjGameGraph.GetVertex(plngCurrentVertexID).Payload
+            Dim stuTransition As stuStatusTransition = BuildTransition(pdrGameEvent)
+            Dim lngNewStatusNodeID As Long
+
+            Select Case stuTransition.Client1Team
+                Case enuTeamType.Red
+                    If stuCurrentStatus.BlueFlagHolderClientID = stuTransition.Client1ID Then
+                        lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, stuCurrentStatus.BlueFlagInBase, _
+                                             stuCurrentStatus.RedFlagHolderClientID, stuTransition.Client2ID, _
+                                             stuCurrentStatus.RedFlagResetTime, stuCurrentStatus.BlueFlagResetTime)
+                        mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientNumberChange))
+                    Else
+                        'Event doesn't affect flag, so move to next node in current working set
+                    End If
+                Case enuTeamType.Blue
+                    If stuCurrentStatus.RedFlagHolderClientID = stuTransition.Client1ID Then
+                        lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, stuCurrentStatus.BlueFlagInBase, _
+                                             stuTransition.Client2ID, stuCurrentStatus.BlueFlagHolderClientID, _
+                                             stuCurrentStatus.RedFlagResetTime, stuCurrentStatus.BlueFlagResetTime)
+                        mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientNumberChange))
+                    Else
+                        'Event doesn't affect flag, so move to next node in current working set
+                    End If
+                Case Else
+                    'Spectator number changing
+                    'Event doesn't affect flag, so move to next node in current working set 
+            End Select
+        End Sub
+
+        ''' <summary>
+        ''' Adjusts the game graph, using the current vertex ID as the start point,
+        ''' and adds the new state and the appropriate transition to the new state
+        ''' to the game graph for a client END event.
+        ''' </summary>
+        ''' <param name="plngCurrentVertexID">The current vertex ID.</param>
+        ''' <param name="pdrGameEvent">The game event row.</param>
+        Private Sub ConsiderEndEvent(ByVal plngCurrentVertexID As Long, ByRef pdrGameEvent As DataRow)
+            Dim stuCurrentStatus As stuStatusNode = mobjGameGraph.GetVertex(plngCurrentVertexID).Payload
+            Dim stuTransition As stuStatusTransition = BuildTransition(pdrGameEvent)
+            Dim lngNewStatusNodeID As Long
+
+            Select Case stuTransition.Client1Team
+                Case enuTeamType.Red
+                    If stuCurrentStatus.BlueFlagHolderClientID = stuTransition.Client1ID Then
+                        'Red player holding blue flag ending: need to consider whether or not this
+                        'causes the flag to be automatically reset and add both possibilities to
+                        'the working set
+                        lngNewStatusNodeID = AddNewStatusNode(False, stuCurrentStatus.BlueFlagInBase, _
+                                             0, stuCurrentStatus.BlueFlagHolderClientID, _
+                                             stuTransition.EventTime + MINT_SECONDS_UNTIL_FLAG_RESET, stuCurrentStatus.BlueFlagResetTime)
+                        mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientEnd))
+
+                        lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.RedFlagInBase, _
+                                             0, stuCurrentStatus.BlueFlagHolderClientID, _
+                                             0, stuCurrentStatus.BlueFlagResetTime)
+                        mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientEnd))
+                    Else
+                        'Event doesn't affect flag, so move to next node in current working set
+                    End If
+                Case enuTeamType.Blue
+                    If stuCurrentStatus.RedFlagHolderClientID = stuTransition.Client1ID Then
+                        'Blue player holding red flag ending: need to consider whether or not this
+                        'causes the flag to be automatically reset and add both possibilities to
+                        'the working set
+                        lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, False, _
+                                             stuCurrentStatus.RedFlagHolderClientID, 0, _
+                                             stuCurrentStatus.RedFlagResetTime, stuTransition.EventTime + MINT_SECONDS_UNTIL_FLAG_RESET)
+                        mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientEnd))
+
+                        lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, True, _
+                                             stuCurrentStatus.RedFlagHolderClientID, 0, _
+                                             stuCurrentStatus.RedFlagResetTime, 0)
+                        mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientEnd))
+                    Else
+                        'Event doesn't affect flag, so move to next node in current working set
+                    End If
+                Case Else
+                    'Spectator leaving
+                    'Event doesn't affect flag, so move to next node in current working set
+            End Select
+        End Sub
+
+        ''' <summary>
+        ''' Adjusts the game graph, using the current vertex ID as the start point,
+        ''' and adds the new state and the appropriate transition to the new state
+        ''' to the game graph for a KILL event.
+        ''' </summary>
+        ''' <param name="plngCurrentVertexID">The current vertex ID.</param>
+        ''' <param name="pdrGameEvent">The game event row.</param>
+        Private Sub ConsiderKillEvent(ByVal plngCurrentVertexID As Long, ByRef pdrGameEvent As DataRow)
+            Dim stuCurrentStatus As stuStatusNode = mobjGameGraph.GetVertex(plngCurrentVertexID).Payload
+            Dim stuTransition As stuStatusTransition = BuildTransition(pdrGameEvent)
+            Dim lngNewStatusNodeID As Long
+
+            'Branch on VICTIM team
+            Select Case stuTransition.Client2Team
+                Case enuTeamType.Red
+                    'Red player dying
+                    If stuCurrentStatus.BlueFlagHolderClientID = stuTransition.Client2ID Then
+                        'Red player holding blue flag dying: need to consider whether or not this
+                        'causes the flag to be automatically reset and add both possibilities to
+                        'the working set
+                        lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, False, _
+                                             stuCurrentStatus.RedFlagHolderClientID, 0, _
+                                             stuCurrentStatus.RedFlagResetTime, stuTransition.EventTime + MINT_SECONDS_UNTIL_FLAG_RESET)
+                        mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierKillWithDrop))
+
+                        lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, True, _
+                                             stuCurrentStatus.RedFlagHolderClientID, 0, _
+                                             stuCurrentStatus.RedFlagResetTime, 0)
+                        mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierKillWithReset))
+                    Else
+                        'Event doesn't affect flag, so move to next node in current working set
+                    End If
+                Case enuTeamType.Blue
+                    'Blue player dying
+                    If stuCurrentStatus.RedFlagHolderClientID = stuTransition.Client2ID Then
+                        'Blue player holding red flag dying: need to consider whether or not this
+                        'causes the flag to be automatically reset and add both possibilities to
+                        'the working set
+                        lngNewStatusNodeID = AddNewStatusNode(False, stuCurrentStatus.BlueFlagInBase, _
+                                             0, stuCurrentStatus.BlueFlagHolderClientID, _
+                                             stuTransition.EventTime + MINT_SECONDS_UNTIL_FLAG_RESET, stuCurrentStatus.BlueFlagResetTime)
+                        mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierKillWithDrop))
+
+                        lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.RedFlagInBase, _
+                                             0, stuCurrentStatus.BlueFlagHolderClientID, _
+                                             0, stuCurrentStatus.BlueFlagResetTime)
+                        mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierKillWithReset))
+                    Else
+                        'Event doesn't affect flag, so move to next node in current working set
+                    End If
+                Case Else
+                    Throw New Exception("Team type: " & stuTransition.Client2Team & " is not a valid victim type!")
+            End Select
+        End Sub
+
+        ''' <summary>
+        ''' Adjusts the game graph, using the current vertex ID as the start point,
+        ''' and adds the new state and the appropriate transition to the new state
+        ''' to the game graph for an ITEM event.
+        ''' </summary>
+        ''' <param name="plngCurrentVertexID">The current vertex ID.</param>
+        ''' <param name="pdrGameEvent">The game event row.</param>
+        Private Sub ConsiderItemEvent(ByVal plngCurrentVertexID As Long, ByRef pdrGameEvent As DataRow)
+            Dim stuCurrentStatus As stuStatusNode = mobjGameGraph.GetVertex(plngCurrentVertexID).Payload
+            Dim stuTransition As stuStatusTransition = BuildTransition(pdrGameEvent)
+            Dim lngNewStatusNodeID As Long
+
+            Select Case UCase$(stuTransition.ItemName)
+                Case "TEAM_CTF_BLUEFLAG"
+                    Select Case stuTransition.Client1Team
+                        Case enuTeamType.Red
+                            'Red touching blue, could be either steal or pickup
+                            If stuCurrentStatus.BlueFlagInBase Then
+                                'Red Steals Blue flag
+                                lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, False, _
+                                                     stuCurrentStatus.RedFlagHolderClientID, stuTransition.Client1ID, _
+                                                     stuCurrentStatus.RedFlagResetTime, 0)
+                                mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Steal))
+                            Else
+                                'Red Pickup of Blue flag
+                                lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, False, _
+                                                     stuCurrentStatus.RedFlagHolderClientID, stuTransition.Client1ID, _
+                                                     stuCurrentStatus.RedFlagResetTime, 0)
+                                mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Pickup))
+                            End If
+                        Case enuTeamType.Blue
+                            'Blue touching blue, could be either capture or recovery
+                            If stuCurrentStatus.BlueFlagInBase Then
+                                If stuTransition.Client1ID = stuCurrentStatus.RedFlagHolderClientID Then
+                                    'Blue Team Captures
+                                    lngNewStatusNodeID = AddNewStatusNode(True, True, _
+                                                     0, 0, _
+                                                     0, 0)
+                                    mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Capture))
+                                Else
+                                    'Remove the current state from the game graph: this is impossible.
+                                    'Can't have a recovery if the blue flag is in the base, can't have a 
+                                    'capture if the red holder isn't the first client.
+                                    mobjGameGraph.RemoveVertex(plngCurrentVertexID)
+                                End If
+                            Else
+                                If stuCurrentStatus.BlueFlagHolderClientID = 0 Then
+                                    'Blue Recovers Blue Flag
+                                    lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, True, _
+                                                     stuCurrentStatus.RedFlagHolderClientID, 0, _
+                                                     stuCurrentStatus.RedFlagResetTime, 0)
+                                    mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Recovery))
+                                Else
+                                    'Can't recover a flag being held
+                                    mobjGameGraph.RemoveVertex(plngCurrentVertexID)
+                                End If
+                            End If
+                        Case Else
+                            Throw New Exception("Other team type is invalid for flag touch: " & stuTransition.Client1Team)
+                    End Select
+                Case "TEAM_CTF_REDFLAG"
+                    Select Case stuTransition.Client1Team
+                        Case enuTeamType.Red
+                            'Red touching red, could be either capture or recovery
+                            If stuCurrentStatus.RedFlagInBase Then
+                                If stuTransition.Client1ID = stuCurrentStatus.BlueFlagHolderClientID Then
+                                    'Red Capture
+                                    lngNewStatusNodeID = AddNewStatusNode(True, True, _
+                                                    0, 0, _
+                                                     0, 0)
+                                    mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Capture))
+                                Else
+                                    'Remove the current state from the game graph: this is impossible.
+                                    'Can't have a recovery if the red flag is in the base, can't have a 
+                                    'capture if the blue holder isn't the first client.
+                                    mobjGameGraph.RemoveVertex(plngCurrentVertexID)
+                                End If
+                            Else
+                                If stuCurrentStatus.RedFlagHolderClientID = 0 Then
+                                    'Red Recovers Red Flag
+                                    lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.BlueFlagInBase, _
+                                                     0, stuCurrentStatus.BlueFlagHolderClientID, _
+                                                     0, stuCurrentStatus.BlueFlagResetTime)
+                                    mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Recovery))
+                                Else
+                                    'Can't recover a flag being held
+                                    mobjGameGraph.RemoveVertex(plngCurrentVertexID)
+                                End If
+                            End If
+                        Case enuTeamType.Blue
+                            'Blue touching red, steal or pickup
+                            If stuCurrentStatus.RedFlagInBase Then
+                                'Blue Steals Red Flag
+                                lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, False, _
+                                                     stuCurrentStatus.RedFlagHolderClientID, stuTransition.Client1ID, _
+                                                     stuCurrentStatus.RedFlagResetTime, 0)
+                                mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Steal))
+                            Else
+                                'Blue Pickup of Red Flag
+                                lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, False, _
+                                                     stuCurrentStatus.RedFlagHolderClientID, stuTransition.Client1ID, _
+                                                     stuCurrentStatus.RedFlagResetTime, 0)
+                                mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Pickup))
+                            End If
+                        Case Else
+                            Throw New Exception("Other team type is invalid for flag capture: " & stuTransition.Client1Team)
+                    End Select
+                Case Else
+                    Throw New Exception("Unknown item type: " & stuTransition.EventType)
+            End Select
+        End Sub
+
+        ''' <summary>
+        ''' Adds the new, disconnected status node.
+        ''' </summary>
+        ''' <param name="pblnRedFlagInBase">if set to <c>true</c> [red flag in base].</param>
+        ''' <param name="pblnBlueFlagInBase">if set to <c>true</c> [blue flag in base].</param>
+        ''' <param name="plngRedFlagHolderClientID">The red flag holder client ID.</param>
+        ''' <param name="plngBlueFlagHolderClientID">The blue flag holder client ID.</param>
+        ''' <param name="plngRedFlagResetTime">The red flag reset time.</param>
+        ''' <param name="plngBlueFlagResetTime">The blue flag reset time.</param>
+        ''' <returns>ID of new vertex ID.</returns>
+        Private Function AddNewStatusNode(ByVal pblnRedFlagInBase As Boolean, ByVal pblnBlueFlagInBase As Boolean, _
+                                          ByVal plngRedFlagHolderClientID As Long, ByVal plngBlueFlagHolderClientID As Long, _
+                                          ByVal plngRedFlagResetTime As Long, ByVal plngBlueFlagResetTime As Long) As Long
+            Dim stuPayload As New stuStatusNode(pblnRedFlagInBase, pblnBlueFlagInBase, _
+                                                plngRedFlagHolderClientID, plngBlueFlagHolderClientID, _
+                                                plngRedFlagResetTime, plngBlueFlagResetTime)
+            Return mobjGameGraph.AddNewVertex(stuPayload)
+        End Function
+
+        ''' <summary>
+        ''' Builds the transition from the game event.
+        ''' </summary>
+        ''' <param name="pdrGameEvent">The game event data row.</param>
+        ''' <param name="penuSignificance">The significance of the transition, if known.</param>
+        ''' <returns>A new stuTransition struct, with everything populated from the row, and significance assigned from param.</returns>
+        Private Function BuildTransition(ByRef pdrGameEvent As DataRow, Optional ByVal penuSignificance As enuSignificanceType = enuSignificanceType.None) As stuStatusTransition
+            Dim stuTransition As New stuStatusTransition()
+
+            Dim lngCurrentLineNo As Long
+            Dim intCurrentPrimaryID As Integer
+
+            'Vars populated from current event record
+            Dim lngEventID As Long
+            Dim lngGameID As Long
+            Dim lngEventTime As Long
+            Dim lngLineNo As Long
+            Dim strEventType As String
+            Dim lngClientID1 As Long
+            Dim lngClientID2 As Long
+            Dim enuClientTeam1 As enuTeamType
+            Dim enuClientTeam2 As enuTeamType
+            Dim strItemName As String
+            Dim strWeaponName As String
+
+            'Store current line info
+            intCurrentPrimaryID = CInt(pdrGameEvent("PrimaryID"))
+            lngCurrentLineNo = CLng(pdrGameEvent("LineNo"))
+
+            'Read status variables from current data row
+            lngEventID = CLng(pdrGameEvent("EventID"))
+            lngGameID = CLng(pdrGameEvent("GameID"))
+            lngEventTime = CLng(pdrGameEvent("EventTime"))
+            lngLineNo = CLng(pdrGameEvent("LineNo"))
+            strEventType = CStr(pdrGameEvent("EventType"))
+            If Not IsDBNull(pdrGameEvent("ClientID1")) Then
+                lngClientID1 = CLng(pdrGameEvent("ClientID1"))
+            Else
+                lngClientID1 = 0
+            End If
+            If Not IsDBNull(pdrGameEvent("ClientID2")) Then
+                lngClientID2 = CLng(pdrGameEvent("ClientID2"))
+            Else
+                lngClientID2 = 0
+            End If
+            If Not IsDBNull(pdrGameEvent("ClientTeam1")) Then
+                Select Case CStr(pdrGameEvent("ClientTeam1")).ToUpper
+                    Case "RED"
+                        enuClientTeam1 = enuTeamType.Red
+                    Case "BLUE"
+                        enuClientTeam1 = enuTeamType.Blue
+                    Case Else
+                        enuClientTeam1 = enuTeamType.None
+                End Select
+            Else
+                enuClientTeam1 = enuTeamType.None
+            End If
+            If Not IsDBNull(pdrGameEvent("ClientTeam2")) Then
+                Select Case CStr(pdrGameEvent("ClientTeam2")).ToUpper
+                    Case "RED"
+                        enuClientTeam2 = enuTeamType.Red
+                    Case "BLUE"
+                        enuClientTeam2 = enuTeamType.Blue
+                    Case Else
+                        enuClientTeam2 = enuTeamType.None
+                End Select
+            Else
+                enuClientTeam2 = enuTeamType.None
+            End If
+            If Not IsDBNull(pdrGameEvent("ItemName")) Then
+                strItemName = CStr(pdrGameEvent("ItemName"))
+            Else
+                strItemName = Nothing
+            End If
+            If Not IsDBNull(pdrGameEvent("WeaponName")) Then
+                strWeaponName = CStr(pdrGameEvent("WeaponName"))
+            Else
+                strWeaponName = Nothing
+            End If
+
+            With stuTransition
+                .Significance = penuSignificance
+
+                .Client1ID = lngClientID1
+                .Client1Team = enuClientTeam1
+                .Client2ID = lngClientID2
+                .Client2Team = enuClientTeam2
+                .EventID = lngEventID
+                .EventTime = lngEventTime
+                .EventType = strEventType
+                .ItemName = strItemName
+                .LineNo = lngLineNo
+                .WeaponName = strWeaponName
+            End With
+
+            Return stuTransition
+        End Function
 
         ''' <summary>
         ''' Determines which of the pathes tallies to the score from log.
@@ -664,6 +1102,93 @@ Namespace LogParsing.FlagCalculator
             Next
         End Sub
 
+        ''' <summary>
+        ''' Updates the flag statistics in DB: captures/steals/pickups/etc.
+        ''' </summary>
+        ''' <exception cref="Exception">If path isn't valid.</exception>
+        ''' <param name="plstStatisticsPath">The statistics path, a list of longs, which are node IDs, ordered from root to sink, on a tallying path.</param>
+        ''' <returns><c>true/false</c> on success/failure</returns>
+        Private Function UpdateDBFlagStatisticsForPath(ByRef plstStatisticsPath As List(Of Long)) As Boolean
+            Dim vCurr As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphVertex(Of stuStatusNode)
+            Dim vNext As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphVertex(Of stuStatusNode)
+            Dim stuStatusCurr As stuStatusTransition
+            Dim trnUpdate As SqlTransaction = Nothing
+            Dim intLimit As Integer = plstStatisticsPath.Count - 2
+
+            'Check if statistics path has more than 1 node, else there is no stats to update
+            If plstStatisticsPath.Count < 2 Then Return True
+
+            Try
+                trnUpdate = mcxnStatsDB.BeginTransaction()
+
+                vCurr = mobjGameGraph.GetVertex(plstStatisticsPath(0))
+                vNext = mobjGameGraph.GetVertex(plstStatisticsPath(1))
+
+                'Walk the stats path, from root to sink
+                For intIdx As Integer = 0 To intLimit
+                    stuStatusCurr = mobjGameGraph.GetConnectingEdges(vCurr.VertexID, vNext.VertexID)(0).Payload
+
+                    'Call the function which will update the event in the DB, if nessecary
+                    UpdateDBFlagStatisticsForNode(stuStatusCurr, trnUpdate)
+
+                    vCurr = mobjGameGraph.GetVertex(plstStatisticsPath(intIdx))
+                    vNext = mobjGameGraph.GetVertex(plstStatisticsPath(intIdx + 1))
+                Next
+
+                trnUpdate.Commit()
+                Return True
+            Catch ex As Exception
+                If trnUpdate IsNot Nothing Then
+                    trnUpdate.Rollback()
+                End If
+
+                Return False
+            End Try
+        End Function
+
+        ''' <summary>
+        ''' Updates the DB flag statistics for a single transition in the stats path,
+        ''' if the transition into the node merits a db update.
+        ''' </summary>
+        ''' <param name="pstuTransition">The transition to check to update.</param>
+        ''' <param name="ptrnUpdate">The path flag stats update transaction.</param>
+        Private Sub UpdateDBFlagStatisticsForNode(ByRef pstuTransition As stuStatusTransition, ByRef ptrnUpdate As SqlTransaction)
+            Dim strSQL As String
+            Dim sqlcmdUpdate As SqlCommand
+
+            Select Case pstuTransition.Significance
+                Case enuSignificanceType.Capture
+                    strSQL = "UPDATE CalculatedData.ClientToItem " & _
+                            "SET IsFlagCapture = 1 " & _
+                            "WHERE ClientToItemID = @ID "
+                Case enuSignificanceType.CarrierKillWithDrop, enuSignificanceType.CarrierKillWithReset
+                    strSQL = "UPDATE CalculatedData.[Kill] " & _
+                            "SET IsCarrierKill = 1 " & _
+                            "WHERE KillID = @ID "
+                Case enuSignificanceType.Pickup
+                    strSQL = "UPDATE CalculatedData.ClientToItem " & _
+                            "SET IsFlagPickup = 1 " & _
+                            "WHERE ClientToItemID = @ID "
+                Case enuSignificanceType.Recovery
+                    strSQL = "UPDATE CalculatedData.ClientToItem " & _
+                            "SET IsFlagRecovery = 1 " & _
+                            "WHERE ClientToItemID = @ID "
+                Case enuSignificanceType.Steal
+                    strSQL = "UPDATE CalculatedData.ClientToItem " & _
+                            "SET IsFlagSteal = 1 " & _
+                            "WHERE ClientToItemID = @ID "
+                Case Else
+                    strSQL = Nothing
+            End Select
+
+            If strSQL IsNot Nothing Then
+                sqlcmdUpdate = New SqlCommand(strSQL, mcxnStatsDB)
+                sqlcmdUpdate.Parameters.AddWithValue("ID", pstuTransition.EventID)
+                sqlcmdUpdate.Transaction = ptrnUpdate
+
+                sqlcmdUpdate.ExecuteNonQuery()
+            End If
+        End Sub
 #End Region
     End Class
 End Namespace
