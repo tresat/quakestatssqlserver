@@ -212,7 +212,7 @@ Partial Class frmMain
         '
         'frmMain
         '
-        Me.AcceptButton = Me.cmdParse
+        Me.AcceptButton = Me.cmdCalculateNextXFlags
         Me.AutoScaleDimensions = New System.Drawing.SizeF(6.0!, 13.0!)
         Me.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font
         Me.ClientSize = New System.Drawing.Size(832, 442)
@@ -233,6 +233,7 @@ Partial Class frmMain
         Me.Controls.Add(Me.cmdCalculateAllFlags)
         Me.Controls.Add(Me.rtbConsole)
         Me.Controls.Add(Me.cmdParse)
+        Me.DoubleBuffered = True
         Me.Name = "frmMain"
         Me.Text = "Quake Stats Games.Log Parser"
         Me.ResumeLayout(False)
