@@ -41,6 +41,25 @@ Namespace LogParsing
 
 #Region "Private Helpers"
         ''' <summary>
+        ''' Creates an alias for each client which needs one, links clients to appropriate aliases..
+        ''' </summary>
+        Private Sub CalculateAliases()
+            Dim sqlcmdCalc As SqlCommand
+
+            mobjTimer.StartTimer()
+            Print("Beginning Alias calculations...")
+
+            sqlcmdCalc = New SqlCommand("Calculations.spLinkClientsToAliases", mcxnStatsDB)
+            sqlcmdCalc.CommandType = CommandType.StoredProcedure
+            sqlcmdCalc.CommandTimeout = 0
+
+            sqlcmdCalc.ExecuteNonQuery()
+
+            mobjTimer.StopTimer()
+            Print("Finished Alias calculations in " & mobjTimer.GetResultAsTimeString & " (actual " & mobjTimer.GetElapsedAsTimeString & ").")
+        End Sub
+
+        ''' <summary>
         ''' Calculates the server uppage adjuacencies.
         ''' </summary>
         Private Sub CalculateServerUppageAdjacencies()
