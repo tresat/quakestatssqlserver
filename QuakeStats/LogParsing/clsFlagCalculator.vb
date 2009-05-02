@@ -266,7 +266,7 @@ Namespace LogParsing.FlagCalculator
         ''' </summary>
         ''' <param name="plngGameID">The game ID to get score for.</param>
         ''' <param name="penuTeamType">Team to get score for.</param>
-        ''' <returns></returns>
+        ''' <returns>The score from the log Blue/Red line.</returns>
         Private Function GetScore(ByVal plngGameID As Long, ByVal penuTeamType As enuTeamType) As Integer
             Dim strSQL As String
             Dim sqlcmdGet As SqlCommand
@@ -464,6 +464,10 @@ Namespace LogParsing.FlagCalculator
             mlstWorkingSet = New List(Of Long)
             mlstWorkingSet.Add(mlngRootID)
 
+            'Now need to set up the initial node as the starting situation in
+            'quake (i.e. both flags in base, timers = 0).
+            mobjGameGraph.GetVertex(mlngRootID).Payload = New stuStatusNode(True, True, 0, 0, 0, 0)
+
             mlngGameID = plngGameID
             mintGoalBlueScore = GetScore(mlngGameID, enuTeamType.Blue)
             mintGoalBlueScore = GetScore(mlngGameID, enuTeamType.Blue)
@@ -611,6 +615,12 @@ Namespace LogParsing.FlagCalculator
                 Case Else
                     Throw New Exception("UNKNOWN event type: " & strEventType)
             End Select
+
+            'And update the working set to reflect the potential new nodes
+            mlstWorkingSet.Clear()
+            For Each vSink As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphVertex(Of stuStatusNode) In mobjGameGraph.GetSinks()
+                mlstWorkingSet.Add(vSink.VertexID)
+            Next
         End Sub
 
         ''' <summary>
