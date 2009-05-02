@@ -103,6 +103,10 @@
       <Project>{D7AC361A-8188-4CEB-9DFE-8F0F63F9DBE1}</Project>
       <Name>GraphLibrary</Name>
     </ProjectReference>
+    <ProjectReference Include="..\..\..\..\Libraries\UnitTestingUtilitiesLibrary\UnitTestingUtilitiesLibrary\UnitTestingUtilitiesLibrary.vbproj">
+      <Project>{3AC81D7E-15EF-4802-8639-1D627936F117}</Project>
+      <Name>UnitTestingUtilitiesLibrary</Name>
+    </ProjectReference>
     <ProjectReference Include="..\QuakeStats\QuakeStats.vbproj">
       <Project>{D98E86E6-A2EF-4F94-AF63-203820C22270}</Project>
       <Name>QuakeStats</Name>
