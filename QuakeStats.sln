@@ -10,6 +10,8 @@ Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "QuakeStatsUnitTests", "Quak
 EndProject
 Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "GraphLibrary", "..\..\..\Libraries\GraphLibrary\GraphLibrary\GraphLibrary.vbproj", "{D7AC361A-8188-4CEB-9DFE-8F0F63F9DBE1}"
 EndProject
+Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "UnitTestingUtilitiesLibrary", "..\..\..\Libraries\UnitTestingUtilitiesLibrary\UnitTestingUtilitiesLibrary\UnitTestingUtilitiesLibrary.vbproj", "{3AC81D7E-15EF-4802-8639-1D627936F117}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,6 +30,10 @@ Global
 		{D7AC361A-8188-4CEB-9DFE-8F0F63F9DBE1}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D7AC361A-8188-4CEB-9DFE-8F0F63F9DBE1}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D7AC361A-8188-4CEB-9DFE-8F0F63F9DBE1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3AC81D7E-15EF-4802-8639-1D627936F117}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3AC81D7E-15EF-4802-8639-1D627936F117}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3AC81D7E-15EF-4802-8639-1D627936F117}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3AC81D7E-15EF-4802-8639-1D627936F117}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
