@@ -66,13 +66,21 @@ Public Class frmMain
                 txtPercentDoneCurrentStep.Text = "n/a"
             Case clsFlagCalculator.enuCalculationStepType.BuildingGameGraph
                 txtCurrentStep.Text = "Building Graph"
-                txtPercentDoneCurrentStep.Text = String.Format("{0}%", (plngIdx / plngLimit) * 100)
+                txtPercentDoneCurrentStep.Text = String.Format("{0}%", FormatPercent(plngIdx / plngLimit, 2, TriState.True, TriState.False, TriState.False))
+            Case clsFlagCalculator.enuCalculationStepType.BuiltGameGraph
+                Print("Finished building game graph, # of vertices: " & plngIdx & ", # of edges: " & plngLimit)
+                txtCurrentStep.Text = "Built Graph"
+                txtPercentDoneCurrentStep.Text = "n/a"
             Case clsFlagCalculator.enuCalculationStepType.FindingPathsThroughGraph
                 txtCurrentStep.Text = "Finding Paths"
-                txtPercentDoneCurrentStep.Text = "n/a"
+                If plngLimit <> Nothing Then
+                    txtPercentDoneCurrentStep.Text = String.Format("{0}%", FormatPercent(plngIdx / plngLimit, 2, TriState.True, TriState.False, TriState.False))
+                Else
+                    txtPercentDoneCurrentStep.Text = plngIdx.ToString
+                End If
             Case clsFlagCalculator.enuCalculationStepType.FilteringPathsToScore
                 txtCurrentStep.Text = "Filtering Paths"
-                txtPercentDoneCurrentStep.Text = String.Format("{0}%", (plngIdx / plngLimit) * 100)
+                txtPercentDoneCurrentStep.Text = String.Format("{0}%", FormatPercent(plngIdx / plngLimit, 2, TriState.True, TriState.False, TriState.False))
             Case Else
                 Throw New ArgumentException("Bad step type: " & penuCurrentStep)
         End Select

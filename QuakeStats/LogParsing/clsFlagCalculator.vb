@@ -123,6 +123,7 @@ Namespace LogParsing.FlagCalculator
             FetchingGameEvents
             FetchedGameEvents
             BuildingGameGraph
+            BuiltGameGraph
             FindingPathsThroughGraph
             FilteringPathsToScore
         End Enum
@@ -140,7 +141,7 @@ Namespace LogParsing.FlagCalculator
         Private mcxnStatsDB As SqlConnection
         Private mobjTimer As Utilities.clsHighPerformanceTimer
 
-        Private mobjGameGraph As clsDirectedGraph(Of stuStatusNode, stuStatusTransition)
+        Private WithEvents mobjGameGraph As clsDirectedGraph(Of stuStatusNode, stuStatusTransition)
         Private mlngRootID As Long
         Private mlstWorkingSet As List(Of Long)
 
@@ -170,6 +171,17 @@ Namespace LogParsing.FlagCalculator
         Public Sub New(ByRef pcxnDB As SqlConnection)
             StatsDB = pcxnDB
             mobjTimer = New Utilities.clsHighPerformanceTimer
+        End Sub
+#End Region
+
+#Region "Event Handlers"
+        Private Sub mobjGameGraph_OperationProgressChanged(ByVal penuOperation As GraphLibrary.DirectedGraph.clsDirectedGraph(Of stuStatusNode, stuStatusTransition).enuOperationType, ByVal plngIdx As Long, ByVal plngLimit As Long) Handles mobjGameGraph.OperationProgressChanged
+            Select Case penuOperation
+                Case clsDirectedGraph(Of Global.QuakeStats.LogParsing.FlagCalculator.stuStatusNode, Global.QuakeStats.LogParsing.FlagCalculator.stuStatusTransition).enuOperationType.FindAllNonLoopingSourceSinkPaths
+                    RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FindingPathsThroughGraph, plngIdx, plngLimit)
+                Case Else
+                    'As of yet, unhandled
+            End Select
         End Sub
 #End Region
 
@@ -534,7 +546,7 @@ Namespace LogParsing.FlagCalculator
                 ConsolidateWorkingSet()
             Next
 
-            RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FindingPathsThroughGraph, Nothing, Nothing)
+            RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.BuiltGameGraph, mobjGameGraph.NumVertices, mobjGameGraph.NumEdges)
 
             'The game graph should be 100% complete at this point.  We'll need to find
             'a path from the source to the sink which tallies to the correct score
@@ -544,7 +556,7 @@ Namespace LogParsing.FlagCalculator
             Dim lngIdx As Long = 0
             For Each lstPath As List(Of Long) In lstCompletePaths
                 lngIdx += 1
-
+                'TODO: Test this path tallies function, it may be broken...
                 If PathTalliesToScoreFromLog(lstPath) Then
                     lstTallyingPaths.Add(lstPath)
                 End If
@@ -572,6 +584,7 @@ Namespace LogParsing.FlagCalculator
         ''' <param name="plngCurrentVertexID">The current vertex ID (in the working set to build new vertices off of).</param>
         ''' <param name="pdrGameEvent">The game event data row.</param>
         Private Sub AddNewGameEventToGraph(ByVal plngCurrentVertexID As Long, ByRef pdrGameEvent As DataRow)
+            Dim lngEventID As Long = CLng(pdrGameEvent("EventID"))
             Dim stuCurrentStatus As stuStatusNode = mobjGameGraph.GetVertex(plngCurrentVertexID).Payload
             Dim lngNewStatusNodeID As Long
             Dim lngEventTime As Long = CLng(pdrGameEvent("EventTime"))
@@ -616,6 +629,14 @@ Namespace LogParsing.FlagCalculator
                     Throw New Exception("UNKNOWN event type: " & strEventType)
             End Select
 
+            'We may have modified or expanded working set here, so rebuild it to be sure
+            RebuildWorkingSet()
+        End Sub
+
+        ''' <summary>
+        ''' Rebuilds the working set list from the list of sink vertices in the graph.
+        ''' </summary>
+        Protected Sub RebuildWorkingSet()
             'And update the working set to reflect the potential new nodes
             mlstWorkingSet.Clear()
             For Each vSink As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphVertex(Of stuStatusNode) In mobjGameGraph.GetSinks()
@@ -683,7 +704,7 @@ Namespace LogParsing.FlagCalculator
                                              stuTransition.EventTime + MINT_SECONDS_UNTIL_FLAG_RESET, stuCurrentStatus.BlueFlagResetTime)
                         mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientEnd))
 
-                        lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.RedFlagInBase, _
+                        lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.BlueFlagInBase, _
                                              0, stuCurrentStatus.BlueFlagHolderClientID, _
                                              0, stuCurrentStatus.BlueFlagResetTime)
                         mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientEnd))
@@ -896,6 +917,12 @@ Namespace LogParsing.FlagCalculator
             Dim stuPayload As New stuStatusNode(pblnRedFlagInBase, pblnBlueFlagInBase, _
                                                 plngRedFlagHolderClientID, plngBlueFlagHolderClientID, _
                                                 plngRedFlagResetTime, plngBlueFlagResetTime)
+
+            Debug.Assert((pblnBlueFlagInBase AndAlso (plngBlueFlagHolderClientID = 0)) OrElse _
+                        (Not pblnBlueFlagInBase) AndAlso (plngBlueFlagHolderClientID <> 0 Or plngBlueFlagResetTime <> 0))
+            Debug.Assert((pblnRedFlagInBase AndAlso (plngRedFlagHolderClientID = 0)) OrElse _
+                        (Not pblnRedFlagInBase) AndAlso (plngRedFlagHolderClientID <> 0 Or plngRedFlagResetTime <> 0))
+
             Return mobjGameGraph.AddNewVertex(stuPayload)
         End Function
 
@@ -1053,8 +1080,10 @@ Namespace LogParsing.FlagCalculator
             Dim blnFoundSetForVertex As Boolean
             Dim lstNewVertexSet As List(Of Long)
             Dim intLimit As Integer
+            Dim intEdgeLimit As Integer
             Dim lngReplacementVertexID As Long
             Dim lstEdges As List(Of Long)
+            Dim lngEdgeID As Long
 
             For Each lngVertexID As Long In mlstWorkingSet
                 Debug.Assert(mobjGameGraph.IsSink(lngVertexID))
@@ -1088,7 +1117,9 @@ Namespace LogParsing.FlagCalculator
                 intLimit = lstVertexSet.Count - 1
                 For intIdx As Integer = 1 To intLimit
                     lstEdges = mobjGameGraph.GetVertex(lstVertexSet(intIdx)).Edges
-                    For Each lngEdgeID As Long In lstEdges
+                    intEdgeLimit = lstEdges.Count - 1
+                    For intEdgeIdx As Integer = 0 To intEdgeLimit 'Don't use for each, since exception on modifying element contained in iteration 
+                        lngEdgeID = lstEdges(intEdgeIdx)
                         If mobjGameGraph.GetEdge(lngEdgeID).EndVertexID <> lngReplacementVertexID Then
                             'An edge exists pointing to a vertex to be discarded,
                             'it needs to repoint to the correct vertex
@@ -1110,6 +1141,9 @@ Namespace LogParsing.FlagCalculator
                     mobjGameGraph.RemoveVertex(lstVertexSet(intIdx))
                 Next
             Next
+
+            'We may have deleted from the old working set here, so rebuild it to be sure
+            RebuildWorkingSet()
         End Sub
 
         ''' <summary>

@@ -12,7 +12,7 @@ Imports QuakeStats.LogParsing.FlagCalculator
 Public Class clsDirectedGraphTester
     Inherits clsBaseUnitTester
 
-    <Test(), Description("Tests basic constructor calls."), Category("Constructor")> _
+    <Test(), Description("Tests basic constructor calls."), Category("Constructors")> _
     Public Sub TestCreateDirectedGraph()
         Dim dgGraph As New clsDirectedGraph(Of Long, Long)
         Dim dgGraph2 As New clsDirectedGraph(Of Object, Object)
@@ -30,9 +30,9 @@ Public Class clsDirectedGraphTester
         Dim dgGraph3 As New clsDirectedGraph(Of Object, Object)(3, lstPayloads)
     End Sub
 
-    <Test(), Description("Test SetEdgeEnd() function"), Category("Method Tests")> _
+    <Test(), Description("Test SetEdgeEnd() function"), Category("Methods")> _
     Public Sub TestSetEdgeEnd()
-        Dim dgGraph As New clsDirectedGraph(Of String, String)
+        Dim dgGraph As New clsDirectedGraph(Of String, String)(0)
 
         Dim lngVertex1ID As Long = dgGraph.AddNewVertex("The")
         Dim lngVertex2ID As Long = dgGraph.AddNewVertex("quick")
@@ -56,5 +56,58 @@ Public Class clsDirectedGraphTester
         Debug.Assert(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(0)).EndVertexID = lngVertex2ID)
         Debug.Assert(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(1)).StartVertexID = lngVertex3ID)
         Debug.Assert(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(1)).EndVertexID = lngVertex1ID)
+    End Sub
+
+    <Test(), Description("Test RemoveVertex() function"), Category("Methods")> _
+    Public Sub TestRemoveVertex()
+        Dim dgGraph As New clsDirectedGraph(Of String, String)(0)
+
+        Dim lngVertex1ID As Long = dgGraph.AddNewVertex("The")
+        Dim lngVertex2ID As Long = dgGraph.AddNewVertex("quick")
+        Dim lngVertex3ID As Long = dgGraph.AddNewVertex("brown")
+
+        Dim lngEdge1ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex2ID)
+        Dim lngEdge2ID As Long = dgGraph.AddNewEdge(lngVertex2ID, lngVertex3ID)
+
+        dgGraph.RemoveVertex(lngVertex2ID)
+
+        Assert.True(dgGraph.GetVertex(lngVertex1ID).Edges.Count = 0)
+        Assert.True(dgGraph.GetVertex(lngVertex3ID).Edges.Count = 0)
+
+        For Each lngEdge In dgGraph.GetVertex(lngVertex1ID).Edges
+
+        Next
+    End Sub
+
+    <Test(), ExpectedException(), Description("Test vertex not found exception"), Category("Methods")> _
+    Public Sub TestRemoveVertex2()
+        Dim dgGraph As New clsDirectedGraph(Of String, String)(0)
+
+        Dim lngVertex1ID As Long = dgGraph.AddNewVertex("The")
+
+        dgGraph.GetVertex(lngVertex1ID)
+
+        dgGraph.RemoveVertex(lngVertex1ID)
+
+        dgGraph.GetVertex(lngVertex1ID)
+    End Sub
+
+    <Test(), ExpectedException(), Description("Test edge not found exception"), Category("Methods")> _
+    Public Sub TestRemoveEdge()
+        Dim dgGraph As New clsDirectedGraph(Of String, String)(0)
+
+        Dim lngVertex1ID As Long = dgGraph.AddNewVertex("The")
+        Dim lngVertex2ID As Long = dgGraph.AddNewVertex("quick")
+        Dim lngVertex3ID As Long = dgGraph.AddNewVertex("brown")
+
+        Dim lngEdge1ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex2ID)
+        Dim lngEdge2ID As Long = dgGraph.AddNewEdge(lngVertex2ID, lngVertex3ID)
+        Dim lngedge3ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex3ID)
+
+        dgGraph.GetEdge(lngEdge2ID)
+
+        dgGraph.RemoveEdge(lngEdge2ID)
+
+        dgGraph.GetEdge(lngEdge2ID)
     End Sub
 End Class

@@ -6,7 +6,7 @@ Imports GraphLibrary.Graph
 
 <TestFixture()> _
 Public Class clsGraphTester
-    <Test(), Description("TestGraphCreation"), Category("Graph")> _
+    <Test(), Description("TestGraphCreation"), Category("Constructors")> _
     Public Sub TestCreateGraph()
         Dim g As clsGraph(Of Object, Object)
 
