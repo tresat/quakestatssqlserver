@@ -6,7 +6,7 @@ Imports System.IO
 Imports System.Configuration
 Imports QuakeStats.Utilities.clsHighPerformanceTimer
 Imports GraphLibrary.DirectedGraph
-
+Imports System.Text
 Namespace LogParsing.FlagCalculator
 #Region "Team"
     Public Enum enuTeamType
@@ -160,6 +160,12 @@ Namespace LogParsing.FlagCalculator
                 VerifyDBConnected(mcxnStatsDB)
             End Set
         End Property
+
+        Public ReadOnly Property GameGraph() As clsDirectedGraph(Of stuStatusNode, stuStatusTransition)
+            Get
+                Return mobjGameGraph
+            End Get
+        End Property
 #End Region
 
 #Region "Events"
@@ -192,7 +198,8 @@ Namespace LogParsing.FlagCalculator
         ''' <param name="pintStopAfter">The number of games to stop calculating after (-1 = infinite).</param>
         ''' <param name="plngOnlyUncalced">Whether or not to recalculate already calculated games.</param>
         ''' <param name="pblnResetFlagCalculationsFirst">Whether or not to run Utilities.spResetFlagCalculations first.</param>
-        Public Sub CalculateAllGames(Optional ByVal pintStopAfter As Integer = -1, Optional ByVal plngOnlyUnCalced As Boolean = True, Optional ByVal pblnResetFlagCalculationsFirst As Boolean = False)
+        ''' <param name="pblnPrintSnapshots">If <c>true</c>, will print snapshot files during game graph creation.</param>
+        Public Sub CalculateAllGames(Optional ByVal pintStopAfter As Integer = -1, Optional ByVal plngOnlyUnCalced As Boolean = True, Optional ByVal pblnResetFlagCalculationsFirst As Boolean = False, Optional ByVal pblnPrintSnapshots As Boolean = False)
             Dim lngMinGameID = GetMinGameID()
             Dim lngMaxGameID = GetMaxGameID()
             Dim intGamesCalced As Integer = 0
@@ -208,7 +215,7 @@ Namespace LogParsing.FlagCalculator
                         (pintStopAfter = -1) Then
                     If IsCompleteInLog(lngCurrentGameID) And IsCTF(lngCurrentGameID) Then
                         If plngOnlyUnCalced AndAlso Not IsFlagCalculationsComplete(lngCurrentGameID) Then
-                            CalculateGame(lngCurrentGameID, False)
+                            CalculateGame(lngCurrentGameID, False, pblnPrintSnapshots)
                             intGamesCalced += 1
                         End If
                     End If
@@ -224,7 +231,8 @@ Namespace LogParsing.FlagCalculator
         ''' </summary>
         ''' <param name="plngGameID">The game ID.</param>
         ''' <param name="pblnVerifyGameGoodToCalc">Whether or not to check if the game is CTF and complete in log (not needed when called from CAGs function)</param>
-        Public Sub CalculateGame(ByVal plngGameID As Long, Optional ByVal pblnVerifyGameGoodToCalc As Boolean = True)
+        ''' <param name="pblnPrintSnapshots">If <c>true</c>, will print snapshot files during game graph creation.</param>
+        Public Sub CalculateGame(ByVal plngGameID As Long, Optional ByVal pblnVerifyGameGoodToCalc As Boolean = True, Optional ByVal pblnPrintSnapshots As Boolean = False)
             InitCalculateGame(plngGameID)
 
             If (pblnVerifyGameGoodToCalc AndAlso IsCTF(plngGameID) AndAlso IsCompleteInLog(plngGameID)) Or _
@@ -232,7 +240,7 @@ Namespace LogParsing.FlagCalculator
                 Try
                     Print("Game: " & plngGameID & " on map: " & GetMapName(plngGameID) & " init: " & GetInitGameLineNo(plngGameID) & " for map: " & GetMapName(plngGameID) & " ")
                     mobjTimer.StartTimer()
-                    If Not DoCalculateGame(plngGameID) Then
+                    If Not DoCalculateGame(plngGameID, pblnPrintSnapshots) Then
                         Throw New Exception("DoCalculateGame returned false!")
                     End If
 
@@ -481,7 +489,7 @@ Namespace LogParsing.FlagCalculator
             mobjGameGraph.GetVertex(mlngRootID).Payload = New stuStatusNode(True, True, 0, 0, 0, 0)
 
             mlngGameID = plngGameID
-            mintGoalBlueScore = GetScore(mlngGameID, enuTeamType.Blue)
+            mintGoalRedScore = GetScore(mlngGameID, enuTeamType.Red)
             mintGoalBlueScore = GetScore(mlngGameID, enuTeamType.Blue)
         End Sub
 
@@ -513,15 +521,58 @@ Namespace LogParsing.FlagCalculator
         ''' ...or fails to.
         ''' </summary>
         ''' <param name="plngGameID">The game ID for calculate flag stats for.</param>
+        ''' <param name="pblnPrintSnapshots">If <c>true</c>, will print snapshots during game graph creation.</param>
         ''' <returns><c>true/false</c> on success/fail.</returns>
-        Private Function DoCalculateGame(ByVal plngGameID As Long) As Boolean
+        Private Function DoCalculateGame(ByVal plngGameID As Long, Optional ByVal pblnPrintSnapshots As Boolean = False) As Boolean
+            Dim lstCompletePaths As List(Of List(Of Long))
+            Dim lstTallyingPaths As New List(Of List(Of Long))
+            Dim lngIdx As Long = 0
+
+            'Build up the game graph
+            BuildGameGraph(plngGameID, pblnPrintSnapshots)
+
+            RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.BuiltGameGraph, mobjGameGraph.NumVertices, mobjGameGraph.NumEdges)
+
+            'The game graph should be 100% complete at this point.  We'll need to find
+            'a path from the source to the sink which tallies to the correct score
+            lstCompletePaths = mobjGameGraph.GetAllNonLoopingSourceSinkPaths()
+
+            'Filter the paths based on the score
+            For Each lstPath As List(Of Long) In lstCompletePaths
+                lngIdx += 1
+                If PathTalliesToScoreFromLog(lstPath) Then
+                    lstTallyingPaths.Add(lstPath)
+                End If
+
+                If lngIdx Mod MINT_FREQUENCY_OF_PATH_FILTERING_STATUS_NOTIFICATIONS = 0 Then
+                    RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FilteringPathsToScore, lngIdx, lstCompletePaths.Count)
+                End If
+            Next
+
+            'If there is at least one path remaining, game calculations succeed
+            If lstTallyingPaths.Count > 0 Then
+                'Finally, update stats in the DB using the first path (for now)
+                If UpdateDBFlagStatisticsForPath(lstTallyingPaths(0)) Then 'TODO: Consider a better way of doing this
+                    Return True
+                Else
+                    Throw New Exception("Failed to update DB!")
+                End If
+            Else
+                Return False
+            End If
+        End Function
+
+        ''' <summary>
+        ''' Builds the game graph from the db.
+        ''' </summary>
+        ''' <param name="plngGameID">The game ID.</param>
+        ''' <param name="pblnPrintSnapshots">if set to <c>true</c>, will print snapshots to snapshot folder after each game event is parsed.</param>
+        Private Sub BuildGameGraph(ByVal plngGameID As Long, Optional ByVal pblnPrintSnapshots As Boolean = False)
             RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FetchingGameEvents, Nothing, Nothing)
             Dim dtGameEvents As DataTable = GetGameEvents(plngGameID)
             RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FetchedGameEvents, Nothing, dtGameEvents.Rows.Count)
 
             Dim lstPotentialStatesToExamine As List(Of Long)
-            Dim lstCompletePaths As List(Of List(Of Long))
-            Dim lstTallyingPaths As New List(Of List(Of Long))
             Dim intLimit As Integer = dtGameEvents.Rows.Count - 1
 
             'Walk the game events and do the flag calculations to build the game graph
@@ -544,38 +595,12 @@ Namespace LogParsing.FlagCalculator
                 'vertices with identical payloads, and alter all edges pointing to ANY
                 'vertex in the set to point to it.
                 ConsolidateWorkingSet()
-            Next
 
-            RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.BuiltGameGraph, mobjGameGraph.NumVertices, mobjGameGraph.NumEdges)
-
-            'The game graph should be 100% complete at this point.  We'll need to find
-            'a path from the source to the sink which tallies to the correct score
-            lstCompletePaths = mobjGameGraph.GetAllNonLoopingSourceSinkPaths()
-
-            'Filter the paths based on the score
-            Dim lngIdx As Long = 0
-            For Each lstPath As List(Of Long) In lstCompletePaths
-                lngIdx += 1
-                'TODO: Test this path tallies function, it may be broken...
-                If PathTalliesToScoreFromLog(lstPath) Then
-                    lstTallyingPaths.Add(lstPath)
-                End If
-
-                If lngIdx Mod MINT_FREQUENCY_OF_PATH_FILTERING_STATUS_NOTIFICATIONS = 0 Then
-                    RaiseEvent GameCalculationStatusChanged(enuCalculationStepType.FilteringPathsToScore, lngIdx, lstCompletePaths.Count)
+                If pblnPrintSnapshots Then
+                    PrintSnapshot(CBool(IIf(intIdx = 0, True, False)))
                 End If
             Next
-
-            'If there is at least one path remaining, game calculations succeed
-            If lstTallyingPaths.Count < 0 Then
-                'Finally, update stats in the DB using the first path (for now)
-                UpdateDBFlagStatisticsForPath(lstTallyingPaths(0)) 'TODO: Consider a better way of doing this
-
-                Return True
-            Else
-                Return False
-            End If
-        End Function
+        End Sub
 
         ''' <summary>
         ''' Processes the current game event in the data table, modifies the game
@@ -595,9 +620,10 @@ Namespace LogParsing.FlagCalculator
             If stuCurrentStatus.RedFlagResetTime <> 0 AndAlso lngEventTime >= stuCurrentStatus.RedFlagResetTime Then
                 'Add a transition to consider what would happen if the timer 
                 'expired before this event occurs
-                lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, True, _
-                                                      stuCurrentStatus.RedFlagHolderClientID, 0, _
-                                                      stuCurrentStatus.RedFlagResetTime, 0)
+                lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.BlueFlagInBase, _
+                                                      0, stuCurrentStatus.BlueFlagHolderClientID, _
+                                                      0, stuCurrentStatus.BlueFlagResetTime)
+                
                 mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.ResetDueToRedTimerExpiration))
 
                 stuCurrentStatus = mobjGameGraph.GetVertex(lngNewStatusNodeID).Payload
@@ -607,9 +633,10 @@ Namespace LogParsing.FlagCalculator
             If stuCurrentStatus.BlueFlagResetTime <> 0 AndAlso lngEventTime >= stuCurrentStatus.BlueFlagResetTime Then
                 'Add a transition to consider what would happen if the timer 
                 'expired before this event occurs
-                lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.BlueFlagInBase, _
-                                                      0, stuCurrentStatus.BlueFlagHolderClientID, _
-                                                      0, stuCurrentStatus.BlueFlagResetTime)
+                lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, True, _
+                                                      stuCurrentStatus.RedFlagHolderClientID, 0, _
+                                                      stuCurrentStatus.RedFlagResetTime, 0)
+                
                 mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.ResetDueToBlueTimerExpiration))
 
                 'Continue processing this event to consider what would happen if the event
@@ -777,7 +804,7 @@ Namespace LogParsing.FlagCalculator
                                              stuTransition.EventTime + MINT_SECONDS_UNTIL_FLAG_RESET, stuCurrentStatus.BlueFlagResetTime)
                         mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierKillWithDrop))
 
-                        lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.RedFlagInBase, _
+                        lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.BlueFlagInBase, _
                                              0, stuCurrentStatus.BlueFlagHolderClientID, _
                                              0, stuCurrentStatus.BlueFlagResetTime)
                         mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierKillWithReset))
@@ -832,7 +859,7 @@ Namespace LogParsing.FlagCalculator
                                     'Remove the current state from the game graph: this is impossible.
                                     'Can't have a recovery if the blue flag is in the base, can't have a 
                                     'capture if the red holder isn't the first client.
-                                    mobjGameGraph.RemoveVertex(plngCurrentVertexID)
+                                    mobjGameGraph.RemovePathsToVertex(plngCurrentVertexID)
                                 End If
                             Else
                                 If stuCurrentStatus.BlueFlagHolderClientID = 0 Then
@@ -843,7 +870,7 @@ Namespace LogParsing.FlagCalculator
                                     mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Recovery))
                                 Else
                                     'Can't recover a flag being held
-                                    mobjGameGraph.RemoveVertex(plngCurrentVertexID)
+                                    mobjGameGraph.RemovePathsToVertex(plngCurrentVertexID)
                                 End If
                             End If
                         Case Else
@@ -864,7 +891,7 @@ Namespace LogParsing.FlagCalculator
                                     'Remove the current state from the game graph: this is impossible.
                                     'Can't have a recovery if the red flag is in the base, can't have a 
                                     'capture if the blue holder isn't the first client.
-                                    mobjGameGraph.RemoveVertex(plngCurrentVertexID)
+                                    mobjGameGraph.RemovePathsToVertex(plngCurrentVertexID)
                                 End If
                             Else
                                 If stuCurrentStatus.RedFlagHolderClientID = 0 Then
@@ -875,22 +902,22 @@ Namespace LogParsing.FlagCalculator
                                     mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Recovery))
                                 Else
                                     'Can't recover a flag being held
-                                    mobjGameGraph.RemoveVertex(plngCurrentVertexID)
+                                    mobjGameGraph.RemovePathsToVertex(plngCurrentVertexID)
                                 End If
                             End If
                         Case enuTeamType.Blue
                             'Blue touching red, steal or pickup
                             If stuCurrentStatus.RedFlagInBase Then
                                 'Blue Steals Red Flag
-                                lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, False, _
-                                                     stuCurrentStatus.RedFlagHolderClientID, stuTransition.Client1ID, _
-                                                     stuCurrentStatus.RedFlagResetTime, 0)
+                                lngNewStatusNodeID = AddNewStatusNode(False, stuCurrentStatus.BlueFlagInBase, _
+                                                     stuTransition.Client1ID, stuCurrentStatus.BlueFlagHolderClientID, _
+                                                     0, stuCurrentStatus.BlueFlagResetTime)
                                 mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Steal))
                             Else
                                 'Blue Pickup of Red Flag
-                                lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, False, _
-                                                     stuCurrentStatus.RedFlagHolderClientID, stuTransition.Client1ID, _
-                                                     stuCurrentStatus.RedFlagResetTime, 0)
+                                lngNewStatusNodeID = AddNewStatusNode(False, stuCurrentStatus.BlueFlagInBase, _
+                                                     stuTransition.Client1ID, stuCurrentStatus.BlueFlagHolderClientID, _
+                                                     0, stuCurrentStatus.BlueFlagResetTime)
                                 mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.Pickup))
                             End If
                         Case Else
@@ -1040,10 +1067,11 @@ Namespace LogParsing.FlagCalculator
 
             'Travel the path, starting from the start node to the
             'end of the path
-            vCurr = mobjGameGraph.GetVertex(plstPath(0))
+
             If plstPath.Count > 1 Then
                 For intIdx As Integer = 1 To intLimit
                     'Get the transitioning edges
+                    vCurr = mobjGameGraph.GetVertex(plstPath(intIdx - 1))
                     vNext = mobjGameGraph.GetVertex(plstPath(intIdx))
                     'There should only be 1 transitioning edge
                     eConnections = mobjGameGraph.GetConnectingEdges(vCurr.VertexID, vNext.VertexID)
@@ -1081,6 +1109,7 @@ Namespace LogParsing.FlagCalculator
             Dim lstNewVertexSet As List(Of Long)
             Dim intLimit As Integer
             Dim intEdgeLimit As Integer
+            Dim lngDiscardVertexID As Long
             Dim lngReplacementVertexID As Long
             Dim lstEdges As List(Of Long)
             Dim lngEdgeID As Long
@@ -1116,20 +1145,19 @@ Namespace LogParsing.FlagCalculator
                 lngReplacementVertexID = lstVertexSet(0)
                 intLimit = lstVertexSet.Count - 1
                 For intIdx As Integer = 1 To intLimit
-                    lstEdges = mobjGameGraph.GetVertex(lstVertexSet(intIdx)).Edges
+                    lngDiscardVertexID = lstVertexSet(intIdx)
+                    lstEdges = mobjGameGraph.GetIncomingEdges(lngDiscardVertexID)
                     intEdgeLimit = lstEdges.Count - 1
                     For intEdgeIdx As Integer = 0 To intEdgeLimit 'Don't use for each, since exception on modifying element contained in iteration 
                         lngEdgeID = lstEdges(intEdgeIdx)
-                        If mobjGameGraph.GetEdge(lngEdgeID).EndVertexID <> lngReplacementVertexID Then
-                            'An edge exists pointing to a vertex to be discarded,
-                            'it needs to repoint to the correct vertex
-                            mobjGameGraph.SetEdgeEnd(lngEdgeID, lngReplacementVertexID)
-                        Else
-                            'An edge exists pointing from a vertex to be discarded
-                            'outwards.  Since we're only discarding sinks, this is
-                            'an error
-                            Throw New Exception("Edge: " & lngEdgeID & " points out from vertex: " & lstVertexSet(intIdx) & " this should never happen, this vertex should be a sink!")
-                        End If
+
+                        Debug.Assert(mobjGameGraph.GetConnectingEdges(mobjGameGraph.GetEdge(lngEdgeID).StartVertexID, mobjGameGraph.GetEdge(lngEdgeID).EndVertexID).Count = 1)
+
+                        'An edge exists pointing to a vertex to be discarded,
+                        'it needs to repoint to the correct vertex
+                        mobjGameGraph.SetEdgeEnd(lngEdgeID, lngReplacementVertexID)
+
+                        Debug.Assert(mobjGameGraph.GetConnectingEdges(mobjGameGraph.GetEdge(lngEdgeID).StartVertexID, mobjGameGraph.GetEdge(lngEdgeID).EndVertexID).Count = 1)
                     Next
                 Next
             Next
@@ -1233,6 +1261,125 @@ Namespace LogParsing.FlagCalculator
                 sqlcmdUpdate.ExecuteNonQuery()
             End If
         End Sub
+#End Region
+
+#Region "Debug Functionality"
+        Private Sub PrintPathTransitions(ByVal plstPath As List(Of Long))
+            Dim vCurr As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphVertex(Of stuStatusNode)
+            Dim vNext As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphVertex(Of stuStatusNode)
+            Dim intLim As Integer = plstPath.Count - 1
+            Dim eTransition As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphEdge(Of stuStatusTransition)
+
+            For intIdx As Integer = 1 To intLim
+                vCurr = mobjGameGraph.GetVertex(plstPath(intIdx - 1))
+                vNext = mobjGameGraph.GetVertex(plstPath(intIdx))
+
+                eTransition = mobjGameGraph.GetConnectingEdges(vCurr.VertexID, vNext.VertexID)(0)
+
+                Debug.WriteLine(eTransition.Payload.EventID & " @ " & eTransition.Payload.EventTime & " " & If(eTransition.Payload.Significance = enuSignificanceType.Capture, If(eTransition.Payload.Client1Team = enuTeamType.Blue, "Blue", "Red") & " Capture", String.Empty))
+            Next
+        End Sub
+
+        Private Sub PrintSnapshot(Optional ByVal pblnClearDir As Boolean = False)
+            Static intSnapshotID As Integer = 1
+
+            Dim strSnapshotsDir As String = My.Computer.FileSystem.CombinePath(My.Computer.FileSystem.CombinePath(ConfigurationManager.AppSettings("BaseOutputFilesPath"), ConfigurationManager.AppSettings("GraphOutputDir")), "Game-" & mlngGameID & "\")
+            Dim strOutputFileName As String = PadToThreeDigits(intSnapshotID) & ".txt"
+            Dim strOutputFilePath As String = My.Computer.FileSystem.CombinePath(strSnapshotsDir, strOutputFileName)
+
+
+            If My.Computer.FileSystem.DirectoryExists(strSnapshotsDir) Then
+                If pblnClearDir Then
+                    My.Computer.FileSystem.DeleteDirectory(strSnapshotsDir, FileIO.DeleteDirectoryOption.DeleteAllContents)
+                    My.Computer.FileSystem.CreateDirectory(strSnapshotsDir)
+                End If
+            Else
+                My.Computer.FileSystem.CreateDirectory(strSnapshotsDir)
+            End If
+
+            Using writer As New StreamWriter(New FileStream(strOutputFilePath, FileMode.OpenOrCreate))
+                For Each lngVertexID In mobjGameGraph.Vertices()
+                    PrintVertex(writer, lngVertexID)
+                Next
+            End Using
+
+            intSnapshotID += 1
+        End Sub
+
+        Private Sub PrintVertex(ByRef pwriter As StreamWriter, ByVal plngVertexID As Long)
+            Dim vCurr As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphVertex(Of stuStatusNode) = mobjGameGraph.GetVertex(plngVertexID)
+            
+            With pwriter
+                For Each lngEdgeID In mobjGameGraph.GetIncomingEdges(vCurr.VertexID)
+                    PrintEdge(pwriter, lngEdgeID)
+                Next
+                .WriteLine("Vertex: " & vCurr.VertexID & " " & CStr(IIf(vCurr.Payload.BlueFlagInBase, "Blue flag in base", IIf(vCurr.Payload.BlueFlagHolderClientID <> 0, "Blue flag held by: " & vCurr.Payload.BlueFlagHolderClientID, "Blue flag dropped, will reset at: " & vCurr.Payload.BlueFlagResetTime))) & " " & CStr(IIf(vCurr.Payload.RedFlagInBase, "Red flag in base", IIf(vCurr.Payload.RedFlagHolderClientID <> 0, "Red flag held by: " & vCurr.Payload.RedFlagHolderClientID, "Red flag dropped, will reset at: " & vCurr.Payload.RedFlagResetTime))))
+                For Each lngEdgeID In mobjGameGraph.GetOutgoingEdges(vCurr.VertexID)
+                    PrintEdge(pwriter, lngEdgeID)
+                Next
+                .WriteLine(String.Empty)
+            End With
+        End Sub
+
+        Private Sub PrintEdge(ByRef pwriter As StreamWriter, ByVal plngEdgeID As Long)
+            Dim eCurr As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphEdge(Of stuStatusTransition) = mobjGameGraph.GetEdge(plngEdgeID)
+
+            With pwriter
+                .WriteLine(vbTab & eCurr.StartVertexID & " -> " & eCurr.EndVertexID & " event ID: " & eCurr.Payload.EventID & " @ " & eCurr.Payload.EventTime & " " & SignificanceToString(eCurr.Payload))
+            End With
+        End Sub
+
+        Private Function SignificanceToString(ByRef pstuTransition As stuStatusTransition) As String
+            Select Case pstuTransition.Significance
+                Case enuSignificanceType.Capture
+                    Return TeamToString(pstuTransition.Client1Team) & " Captures"
+                Case enuSignificanceType.CarrierClientEnd
+                    Return TeamToString(pstuTransition.Client1Team) & " Ends"
+                Case enuSignificanceType.CarrierClientNumberChange
+                    Return TeamToString(pstuTransition.Client1Team) & " Changes Number"
+                Case enuSignificanceType.CarrierClientTeamChange
+                    Return TeamToString(pstuTransition.Client1Team) & " Changes Team"
+                Case enuSignificanceType.CarrierKillWithDrop
+                    Return TeamToString(pstuTransition.Client2Team) & " Is Killed, Dropping the Flag"
+                Case enuSignificanceType.CarrierKillWithReset
+                    Return TeamToString(pstuTransition.Client2Team) & " Is Killed, Flag Resets"
+                Case enuSignificanceType.Pickup
+                    Return TeamToString(pstuTransition.Client1Team) & " Picks Up"
+                Case enuSignificanceType.Recovery
+                    Return TeamToString(pstuTransition.Client1Team) & " Recovers"
+                Case enuSignificanceType.ResetDueToBlueTimerExpiration
+                    Return "Blue flag is reset due to timer expiration"
+                Case enuSignificanceType.ResetDueToRedTimerExpiration
+                    Return "Red flag is reset due to timer expiration"
+                Case enuSignificanceType.Steal
+                    Return TeamToString(pstuTransition.Client1Team) & " Steals"
+                Case Else
+                    Throw New Exception("Bad significance type: " & pstuTransition.Significance)
+            End Select
+        End Function
+
+        Private Function TeamToString(ByVal penuTeam As enuTeamType) As String
+            Select Case penuTeam
+                Case enuTeamType.Blue
+                    Return "Blue"
+                Case enuTeamType.Red
+                    Return "Red"
+                Case Else
+                    Throw New Exception("Invalid team type: " & penuTeam)
+            End Select
+        End Function
+
+        Private Function PadToThreeDigits(ByVal pintValue As Integer) As String
+            Dim sbResult As New StringBuilder(pintValue.ToString)
+
+            If pintValue < 10 Then
+                sbResult.Insert(0, "00")
+            ElseIf pintValue < 100 Then
+                sbResult.Insert(0, "0")
+            End If
+
+            Return sbResult.ToString
+        End Function
 #End Region
     End Class
 End Namespace

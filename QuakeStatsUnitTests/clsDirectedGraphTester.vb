@@ -43,19 +43,51 @@ Public Class clsDirectedGraphTester
         Dim lngEdge2ID As Long = dgGraph.AddNewEdge(lngVertex2ID, lngVertex3ID)
         Dim lngEdge3ID As Long = dgGraph.AddNewEdge(lngVertex3ID, lngVertex4ID)
 
-        Debug.Assert(dgGraph.GetEdge(lngEdge3ID).StartVertexID = lngVertex3ID)
-        Debug.Assert(dgGraph.GetEdge(lngEdge3ID).EndVertexID = lngVertex4ID)
+        Assert.True(dgGraph.GetEdge(lngEdge3ID).StartVertexID = lngVertex3ID)
+        Assert.True(dgGraph.GetEdge(lngEdge3ID).EndVertexID = lngVertex4ID)
 
         dgGraph.SetEdgeEnd(lngEdge3ID, lngVertex1ID)
 
-        Debug.Assert(dgGraph.GetEdge(lngEdge3ID).StartVertexID = lngVertex3ID)
-        Debug.Assert(dgGraph.GetEdge(lngEdge3ID).EndVertexID = lngVertex1ID)
+        Assert.True(dgGraph.GetEdge(lngEdge3ID).StartVertexID = lngVertex3ID)
+        Assert.True(dgGraph.GetEdge(lngEdge3ID).EndVertexID = lngVertex1ID)
 
-        Debug.Assert(dgGraph.GetVertex(lngVertex1ID).Edges.Count = 2)
-        Debug.Assert(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(0)).StartVertexID = lngVertex1ID)
-        Debug.Assert(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(0)).EndVertexID = lngVertex2ID)
-        Debug.Assert(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(1)).StartVertexID = lngVertex3ID)
-        Debug.Assert(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(1)).EndVertexID = lngVertex1ID)
+        Assert.True(dgGraph.GetVertex(lngVertex1ID).Edges.Count = 2)
+        Assert.True(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(0)).StartVertexID = lngVertex1ID)
+        Assert.True(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(0)).EndVertexID = lngVertex2ID)
+        Assert.True(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(1)).StartVertexID = lngVertex3ID)
+        Assert.True(dgGraph.GetEdge(dgGraph.GetVertex(lngVertex1ID).Edges(1)).EndVertexID = lngVertex1ID)
+    End Sub
+
+    <Test(), Description("Test SetEdgeEnd() function"), Category("Methods")> _
+    Public Sub TestSetEdgeEnd2()
+        Dim dgGraph As New clsDirectedGraph(Of String, String)(0)
+
+        Dim lngVertex1ID As Long = dgGraph.AddNewVertex("central")
+        Dim lngVertex2ID As Long = dgGraph.AddNewVertex("exit")
+        Dim lngVertex3ID As Long = dgGraph.AddNewVertex("exit")
+        Dim lngVertex4ID As Long = dgGraph.AddNewVertex("exit")
+
+        Dim lngEdge1ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex2ID)
+        Dim lngEdge2ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex3ID)
+        Dim lngEdge3ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex4ID)
+
+        Assert.True(dgGraph.GetOutgoingEdges(lngVertex1ID).Count = 3)
+        Assert.True(dgGraph.GetIncomingEdges(lngVertex1ID).Count = 0)
+
+        dgGraph.SetEdgeEnd(lngEdge1ID, lngVertex1ID)
+
+        Assert.True(dgGraph.GetOutgoingEdges(lngVertex1ID).Count = 3)
+        Assert.True(dgGraph.GetIncomingEdges(lngVertex1ID).Count = 1)
+
+        dgGraph.SetEdgeEnd(lngEdge2ID, lngVertex1ID)
+
+        Assert.True(dgGraph.GetOutgoingEdges(lngVertex1ID).Count = 3)
+        Assert.True(dgGraph.GetIncomingEdges(lngVertex1ID).Count = 2)
+
+        dgGraph.SetEdgeEnd(lngEdge3ID, lngVertex1ID)
+
+        Assert.True(dgGraph.GetOutgoingEdges(lngVertex1ID).Count = 3)
+        Assert.True(dgGraph.GetIncomingEdges(lngVertex1ID).Count = 3)
     End Sub
 
     <Test(), Description("Test RemoveVertex() function"), Category("Methods")> _
@@ -109,5 +141,111 @@ Public Class clsDirectedGraphTester
         dgGraph.RemoveEdge(lngEdge2ID)
 
         dgGraph.GetEdge(lngEdge2ID)
+    End Sub
+
+    <Test(), Description("Test remove paths to vertex"), Category("Methods")> _
+    Public Sub TestRemovePathsToVertex()
+        Dim dgGraph As New clsDirectedGraph(Of String, String)(0)
+
+        Dim lngVertex1ID As Long = dgGraph.AddNewVertex("the")
+        Dim lngVertex2ID As Long = dgGraph.AddNewVertex("quick")
+        Dim lngVertex3ID As Long = dgGraph.AddNewVertex("brown")
+        Dim lngVertex4ID As Long = dgGraph.AddNewVertex("fox")
+        Dim lngVertex5ID As Long = dgGraph.AddNewVertex("jumped")
+        Dim lngVertex6ID As Long = dgGraph.AddNewVertex("a")
+        Dim lngVertex7ID As Long = dgGraph.AddNewVertex("fence")
+        Dim lngVertex8ID As Long = dgGraph.AddNewVertex("slow")
+        Dim lngVertex9ID As Long = dgGraph.AddNewVertex("turtle")
+        Dim lngVertex10ID As Long = dgGraph.AddNewVertex("obnoxious")
+        Dim lngVertex11ID As Long = dgGraph.AddNewVertex("otter")
+        Dim lngVertex12ID As Long = dgGraph.AddNewVertex("escaped")
+        Dim lngVertex13ID As Long = dgGraph.AddNewVertex("high")
+
+        Dim lngEdge1ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex2ID)
+        Dim lngEdge2ID As Long = dgGraph.AddNewEdge(lngVertex2ID, lngVertex3ID)
+        Dim lngEdge3ID As Long = dgGraph.AddNewEdge(lngVertex3ID, lngVertex4ID)
+        Dim lngEdge4ID As Long = dgGraph.AddNewEdge(lngVertex4ID, lngVertex5ID)
+        Dim lngEdge5ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex8ID)
+        Dim lngEdge6ID As Long = dgGraph.AddNewEdge(lngVertex8ID, lngVertex9ID)
+        Dim lngEdge7ID As Long = dgGraph.AddNewEdge(lngVertex9ID, lngVertex5ID)
+        Dim lngEdge8ID As Long = dgGraph.AddNewEdge(lngVertex5ID, lngVertex6ID)
+        Dim lngEdge9ID As Long = dgGraph.AddNewEdge(lngVertex6ID, lngVertex7ID)
+        Dim lngEdge10ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex10ID)
+        Dim lngEdge11ID As Long = dgGraph.AddNewEdge(lngVertex10ID, lngVertex11ID)
+        Dim lngEdge12ID As Long = dgGraph.AddNewEdge(lngVertex11ID, lngVertex12ID)
+        Dim lngEdge13ID As Long = dgGraph.AddNewEdge(lngVertex5ID, lngVertex13ID)
+
+        ' 1"the" -1> 2"quick" -2> 3"brown" -3> 4"fox" -4> 5"jumped"
+        '       -5> 8"slow" -6> 9"turtle" -7> 5"jumped" -8> 6"a" -9> 7"fence"
+        '       -10> 10"obnoxious" -11> 11"otter" -12> 12"escaped"
+        ' 5"jumped" -13> 13"high"
+
+        dgGraph.RemovePathsToVertex(lngVertex7ID)
+
+        ' 1"the" -1> 2"quick" -2> 3"brown" -3> 4"fox" -4> 5"jumped"
+        '       -5> 8"slow" -6> 9"turtle" -7> 5"jumped"
+        '       -10> 10"obnoxious" -11> 11"otter" -12> 12"escaped"
+        ' 5"jumped" -13> 13"high"
+
+        Assert.True(dgGraph.NumVertices = 11)
+        Assert.True(dgGraph.NumEdges = 11)
+        Assert.True(dgGraph.GetOutgoingEdges(lngVertex5ID).Count = 1)
+        Assert.True(dgGraph.GetIncomingEdges(lngVertex5ID).Count = 2)
+
+        dgGraph.RemovePathsToVertex(lngVertex9ID)
+
+        ' 1"the" -1> 2"quick" -2> 3"brown" -3> 4"fox" -4> 5"jumped"
+        '       -10> 10"obnoxious" -11> 11"otter" -12> 12"escaped"
+        ' 5"jumped" -13> 13"high"
+
+        Assert.True(dgGraph.NumVertices = 9)
+        Assert.True(dgGraph.NumEdges = 8)
+        Assert.True(dgGraph.GetOutgoingEdges(lngVertex1ID).Count = 2)
+        Assert.True(dgGraph.GetOutgoingEdges(lngVertex5ID).Count = 1)
+        Assert.True(dgGraph.GetIncomingEdges(lngVertex5ID).Count = 1)
+    End Sub
+
+    <Test(), Description("Tests source->sink pathfinding"), Category("Methods")> _
+    Public Sub TestCompleteSourceSinkPathFinding()
+        Dim dgGraph As New clsDirectedGraph(Of String, String)(0)
+
+        Dim lngVertex1ID As Long = dgGraph.AddNewVertex("the")
+        Dim lngVertex2ID As Long = dgGraph.AddNewVertex("quick")
+        Dim lngVertex3ID As Long = dgGraph.AddNewVertex("brown")
+        Dim lngVertex4ID As Long = dgGraph.AddNewVertex("fox")
+        Dim lngVertex5ID As Long = dgGraph.AddNewVertex("jumped")
+        Dim lngVertex6ID As Long = dgGraph.AddNewVertex("a")
+        Dim lngVertex7ID As Long = dgGraph.AddNewVertex("fence")
+        Dim lngVertex8ID As Long = dgGraph.AddNewVertex("slow")
+        Dim lngVertex9ID As Long = dgGraph.AddNewVertex("turtle")
+        Dim lngVertex10ID As Long = dgGraph.AddNewVertex("obnoxious")
+        Dim lngVertex11ID As Long = dgGraph.AddNewVertex("otter")
+        Dim lngVertex12ID As Long = dgGraph.AddNewVertex("escaped")
+        Dim lngVertex13ID As Long = dgGraph.AddNewVertex("high")
+
+        Dim lngEdge1ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex2ID)
+        Dim lngEdge2ID As Long = dgGraph.AddNewEdge(lngVertex2ID, lngVertex3ID)
+        Dim lngEdge3ID As Long = dgGraph.AddNewEdge(lngVertex3ID, lngVertex4ID)
+        Dim lngEdge4ID As Long = dgGraph.AddNewEdge(lngVertex4ID, lngVertex5ID)
+        Dim lngEdge5ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex8ID)
+        Dim lngEdge6ID As Long = dgGraph.AddNewEdge(lngVertex8ID, lngVertex9ID)
+        Dim lngEdge7ID As Long = dgGraph.AddNewEdge(lngVertex9ID, lngVertex5ID)
+        Dim lngEdge8ID As Long = dgGraph.AddNewEdge(lngVertex5ID, lngVertex6ID)
+        Dim lngEdge9ID As Long = dgGraph.AddNewEdge(lngVertex6ID, lngVertex7ID)
+        Dim lngEdge10ID As Long = dgGraph.AddNewEdge(lngVertex1ID, lngVertex10ID)
+        Dim lngEdge11ID As Long = dgGraph.AddNewEdge(lngVertex10ID, lngVertex11ID)
+        Dim lngEdge12ID As Long = dgGraph.AddNewEdge(lngVertex11ID, lngVertex12ID)
+        Dim lngEdge13ID As Long = dgGraph.AddNewEdge(lngVertex5ID, lngVertex13ID)
+
+        ' 1"the" -1> 2"quick" -2> 3"brown" -3> 4"fox" -4> 5"jumped"
+        '       -5> 8"slow" -6> 9"turtle" -7> 5"jumped" -8> 6"a" -9> 7"fence"
+        '       -10> 10"obnoxious" -11> 11"otter" -12> 12"escaped"
+        ' 5"jumped" -13> 13"high"
+
+        Dim lstPaths As List(Of List(Of Long)) = dgGraph.GetAllNonLoopingSourceSinkPaths()
+
+        For Each lstPath As List(Of Long) In lstPaths
+            Debug.Assert(dgGraph.IsSink(lstPath.Last))
+        Next
     End Sub
 End Class
