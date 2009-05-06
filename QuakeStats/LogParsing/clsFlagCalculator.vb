@@ -148,6 +148,9 @@ Namespace LogParsing.FlagCalculator
         Private mlngGameID As Long
         Private mintGoalRedScore As Integer
         Private mintGoalBlueScore As Integer
+
+        Private mlstSuccesses As List(Of Long)
+        Private mlstFailures As List(Of Long)
 #End Region
 
 #Region "Properties"
@@ -177,6 +180,9 @@ Namespace LogParsing.FlagCalculator
         Public Sub New(ByRef pcxnDB As SqlConnection)
             StatsDB = pcxnDB
             mobjTimer = New Utilities.clsHighPerformanceTimer
+
+            mlstSuccesses = New List(Of Long)
+            mlstFailures = New List(Of Long)
         End Sub
 #End Region
 
@@ -224,6 +230,14 @@ Namespace LogParsing.FlagCalculator
                 End If
             Next
             Print("Finished calculating flag captures.")
+
+            If mlstFailures.Count > 0 Then
+                Print("Failures:")
+                For Each lngGameID As Long In mlstFailures
+                    Print(CStr(lngGameID))
+                Next
+            End If
+
         End Sub
 
         ''' <summary>
@@ -238,13 +252,14 @@ Namespace LogParsing.FlagCalculator
             If (pblnVerifyGameGoodToCalc AndAlso IsCTF(plngGameID) AndAlso IsCompleteInLog(plngGameID)) Or _
                 (Not pblnVerifyGameGoodToCalc) Then
                 Try
-                    Print("Game: " & plngGameID & " on map: " & GetMapName(plngGameID) & " init: " & GetInitGameLineNo(plngGameID) & " for map: " & GetMapName(plngGameID) & " ")
+                    Print("Game: " & plngGameID & " on map: " & GetMapName(plngGameID) & " init: " & GetInitGameLineNo(plngGameID))
                     mobjTimer.StartTimer()
                     If Not DoCalculateGame(plngGameID, pblnPrintSnapshots) Then
                         Throw New Exception("DoCalculateGame returned false!")
                     End If
 
                     Print("**************************************SUCCEEDED**************************************")
+                    mlstSuccesses.Add(plngGameID)
                     RaiseEvent GameParsed(True)
 
                     mobjTimer.StopTimer()
@@ -257,6 +272,7 @@ Namespace LogParsing.FlagCalculator
                     Print("**************************************FAILED**************************************")
                     Print("**************************************FAILED**************************************")
                     Print("**************************************FAILED**************************************")
+                    mlstFailures.Add(plngGameID)
                     RaiseEvent GameParsed(False)
 
                     mobjTimer.StopTimer()
@@ -726,14 +742,14 @@ Namespace LogParsing.FlagCalculator
                         'Red player holding blue flag ending: need to consider whether or not this
                         'causes the flag to be automatically reset and add both possibilities to
                         'the working set
-                        lngNewStatusNodeID = AddNewStatusNode(False, stuCurrentStatus.BlueFlagInBase, _
-                                             0, stuCurrentStatus.BlueFlagHolderClientID, _
-                                             stuTransition.EventTime + MINT_SECONDS_UNTIL_FLAG_RESET, stuCurrentStatus.BlueFlagResetTime)
+                        lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, False, _
+                                             stuCurrentStatus.RedFlagHolderClientID, 0, _
+                                             stuCurrentStatus.RedFlagResetTime, stuTransition.EventTime + MINT_SECONDS_UNTIL_FLAG_RESET)
                         mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientEnd))
 
-                        lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.BlueFlagInBase, _
-                                             0, stuCurrentStatus.BlueFlagHolderClientID, _
-                                             0, stuCurrentStatus.BlueFlagResetTime)
+                        lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, True, _
+                                             stuCurrentStatus.RedFlagHolderClientID, 0, _
+                                             stuCurrentStatus.RedFlagResetTime, 0)
                         mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientEnd))
                     Else
                         'Event doesn't affect flag, so move to next node in current working set
@@ -743,14 +759,14 @@ Namespace LogParsing.FlagCalculator
                         'Blue player holding red flag ending: need to consider whether or not this
                         'causes the flag to be automatically reset and add both possibilities to
                         'the working set
-                        lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, False, _
-                                             stuCurrentStatus.RedFlagHolderClientID, 0, _
-                                             stuCurrentStatus.RedFlagResetTime, stuTransition.EventTime + MINT_SECONDS_UNTIL_FLAG_RESET)
+                        lngNewStatusNodeID = AddNewStatusNode(False, stuCurrentStatus.BlueFlagInBase, _
+                                             0, stuCurrentStatus.BlueFlagHolderClientID, _
+                                             stuTransition.EventTime + MINT_SECONDS_UNTIL_FLAG_RESET, stuCurrentStatus.BlueFlagResetTime)
                         mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientEnd))
 
-                        lngNewStatusNodeID = AddNewStatusNode(stuCurrentStatus.RedFlagInBase, True, _
-                                             stuCurrentStatus.RedFlagHolderClientID, 0, _
-                                             stuCurrentStatus.RedFlagResetTime, 0)
+                        lngNewStatusNodeID = AddNewStatusNode(True, stuCurrentStatus.BlueFlagInBase, _
+                                             0, stuCurrentStatus.BlueFlagHolderClientID, _
+                                             0, stuCurrentStatus.BlueFlagResetTime)
                         mobjGameGraph.AddNewEdge(plngCurrentVertexID, lngNewStatusNodeID, BuildTransition(pdrGameEvent, enuSignificanceType.CarrierClientEnd))
                     Else
                         'Event doesn't affect flag, so move to next node in current working set
@@ -1088,7 +1104,21 @@ Namespace LogParsing.FlagCalculator
                             End Select
                         End If
                     Else
-                        Throw New Exception("There should be only 1 edge connecting all vertices in path, " & eConnections.Count & " edges exist between vertices with IDs: " & vCurr.VertexID & " and " & vNext.VertexID)
+                        'Use the last path, since the status nodes on either end
+                        'must be identical, the transition we choose shouldn't really
+                        'matter, and the first could be a reset, which we don't
+                        'want to pick unless we have to
+                        'Check if the connection is a flag capture
+                        If eConnections.Last.Payload.Significance = enuSignificanceType.Capture Then
+                            Select Case eConnections.Last.Payload.Client1Team
+                                Case enuTeamType.Red
+                                    intRedScore += 1
+                                Case enuTeamType.Blue
+                                    intBlueScore += 1
+                                Case Else
+                                    Throw New Exception("Team type: " & eConnections.Last.Payload.Client1Team & " should not be capturing flag, edge ID: " & eConnections.Last.EdgeID)
+                            End Select
+                        End If
                     End If
                 Next
             End If
@@ -1151,13 +1181,11 @@ Namespace LogParsing.FlagCalculator
                     For intEdgeIdx As Integer = 0 To intEdgeLimit 'Don't use for each, since exception on modifying element contained in iteration 
                         lngEdgeID = lstEdges(intEdgeIdx)
 
-                        Debug.Assert(mobjGameGraph.GetConnectingEdges(mobjGameGraph.GetEdge(lngEdgeID).StartVertexID, mobjGameGraph.GetEdge(lngEdgeID).EndVertexID).Count = 1)
-
                         'An edge exists pointing to a vertex to be discarded,
                         'it needs to repoint to the correct vertex
+                        'Note: this can produce multiple edges linking the same
+                        '2 vertices.  This is okay.
                         mobjGameGraph.SetEdgeEnd(lngEdgeID, lngReplacementVertexID)
-
-                        Debug.Assert(mobjGameGraph.GetConnectingEdges(mobjGameGraph.GetEdge(lngEdgeID).StartVertexID, mobjGameGraph.GetEdge(lngEdgeID).EndVertexID).Count = 1)
                     Next
                 Next
             Next
@@ -1280,21 +1308,29 @@ Namespace LogParsing.FlagCalculator
             Next
         End Sub
 
-        Private Sub PrintSnapshot(Optional ByVal pblnClearDir As Boolean = False)
+        Private Sub PrintSnapshot(Optional ByVal pblnClearDir As Boolean = False, Optional ByVal pstrOutputPath As String = Nothing)
             Static intSnapshotID As Integer = 1
 
-            Dim strSnapshotsDir As String = My.Computer.FileSystem.CombinePath(My.Computer.FileSystem.CombinePath(ConfigurationManager.AppSettings("BaseOutputFilesPath"), ConfigurationManager.AppSettings("GraphOutputDir")), "Game-" & mlngGameID & "\")
-            Dim strOutputFileName As String = PadToThreeDigits(intSnapshotID) & ".txt"
-            Dim strOutputFilePath As String = My.Computer.FileSystem.CombinePath(strSnapshotsDir, strOutputFileName)
+            Dim strSnapshotsDir As String
+            Dim strOutputFileName As String
+            Dim strOutputFilePath As String
 
+            If pstrOutputPath Is Nothing Then
+                strSnapshotsDir = My.Computer.FileSystem.CombinePath(My.Computer.FileSystem.CombinePath(ConfigurationManager.AppSettings("BaseOutputFilesPath"), ConfigurationManager.AppSettings("GraphOutputDir")), "Game-" & mlngGameID & "\")
+                strOutputFileName = PadToThreeDigits(intSnapshotID) & ".txt"
+                strOutputFilePath = My.Computer.FileSystem.CombinePath(strSnapshotsDir, strOutputFileName)
 
-            If My.Computer.FileSystem.DirectoryExists(strSnapshotsDir) Then
-                If pblnClearDir Then
-                    My.Computer.FileSystem.DeleteDirectory(strSnapshotsDir, FileIO.DeleteDirectoryOption.DeleteAllContents)
+                If My.Computer.FileSystem.DirectoryExists(strSnapshotsDir) Then
+                    If pblnClearDir Then
+                        My.Computer.FileSystem.DeleteDirectory(strSnapshotsDir, FileIO.DeleteDirectoryOption.DeleteAllContents)
+                        My.Computer.FileSystem.CreateDirectory(strSnapshotsDir)
+                    End If
+                Else
                     My.Computer.FileSystem.CreateDirectory(strSnapshotsDir)
                 End If
             Else
-                My.Computer.FileSystem.CreateDirectory(strSnapshotsDir)
+                strOutputFilePath = pstrOutputPath
+                strOutputFileName = My.Computer.FileSystem.GetName(strOutputFilePath)
             End If
 
             Using writer As New StreamWriter(New FileStream(strOutputFilePath, FileMode.OpenOrCreate))
