@@ -32,6 +32,8 @@ Public Class clsFlagCalculatorTester
 
     End Sub
 
+
+
     <Test(), Description("Tests game graph snapshot printing."), Category("Game Graph")> _
     Public Sub TestPrintSnapshots()
         Dim fc As New clsFlagCalculator(New SqlConnection("Data Source=T30\TOM_SQL_SVR;Initial Catalog=QuakeStats;User ID=QuakeStats;Password=excellent"))
