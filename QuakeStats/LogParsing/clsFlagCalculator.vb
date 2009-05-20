@@ -1313,7 +1313,7 @@ Namespace LogParsing.FlagCalculator
             Dim vNext As clsDirectedGraph(Of stuStatusNode, stuStatusTransition).clsDirectedGraphVertex(Of stuStatusNode)
             Dim stuStatusCurr As stuStatusTransition
             Dim trnUpdate As SqlTransaction = Nothing
-            Dim intLimit As Integer = plstStatisticsPath.Count - 2
+            Dim intLimit As Integer = plstStatisticsPath.Count - 1
 
             'Check if statistics path has more than 1 node, else there is no stats to update
             If plstStatisticsPath.Count < 2 Then Return True
@@ -1321,18 +1321,15 @@ Namespace LogParsing.FlagCalculator
             Try
                 trnUpdate = mcxnStatsDB.BeginTransaction()
 
-                vCurr = mobjGameGraph.GetVertex(plstStatisticsPath(0))
-                vNext = mobjGameGraph.GetVertex(plstStatisticsPath(1))
-
                 'Walk the stats path, from root to sink
-                For intIdx As Integer = 0 To intLimit
+                For intIdx As Integer = 1 To intLimit
+                    vCurr = mobjGameGraph.GetVertex(plstStatisticsPath(intIdx - 1))
+                    vNext = mobjGameGraph.GetVertex(plstStatisticsPath(intIdx))
+
                     stuStatusCurr = mobjGameGraph.GetConnectingEdges(vCurr.VertexID, vNext.VertexID)(0).Payload
 
                     'Call the function which will update the event in the DB, if nessecary
-                    UpdateDBFlagStatisticsForNode(stuStatusCurr, trnUpdate)
-
-                    vCurr = mobjGameGraph.GetVertex(plstStatisticsPath(intIdx))
-                    vNext = mobjGameGraph.GetVertex(plstStatisticsPath(intIdx + 1))
+                    UpdateDBFlagStatisticsForTransition(stuStatusCurr, trnUpdate)
                 Next
 
                 trnUpdate.Commit()
@@ -1352,7 +1349,7 @@ Namespace LogParsing.FlagCalculator
         ''' </summary>
         ''' <param name="pstuTransition">The transition to check to update.</param>
         ''' <param name="ptrnUpdate">The path flag stats update transaction.</param>
-        Private Sub UpdateDBFlagStatisticsForNode(ByRef pstuTransition As stuStatusTransition, ByRef ptrnUpdate As SqlTransaction)
+        Private Sub UpdateDBFlagStatisticsForTransition(ByRef pstuTransition As stuStatusTransition, ByRef ptrnUpdate As SqlTransaction)
             Dim strSQL As String
             Dim sqlcmdUpdate As SqlCommand
 
